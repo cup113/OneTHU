@@ -159,6 +159,24 @@ grep -rl "onethu.dev.badge.hidden" apps/desktop/dist/assets || echo "正式版�
 - 本机发布线继续用 `build-release-apk.sh`，两套脚本刻意不合并：前者处理 exFAT 外置盘
   （内盘工程 + 符号链接 + `rootDirRel` 绝对路径改写），CI 的 ext4 上这些前提都不存在。
 
+### 从 CI 发一个分叉版
+
+手动触发 `release.yml` 时勾 `fork`、`android`、`release`，并在 `version` 填形如 `0.11.3-2`
+的版本号。三步：
+
+1. `guard` job 先校验输入组合：`release` 必须同时勾 `fork` 与 `android`，不能只跑 Windows、
+   不能用自建 Windows runner（都凑不出三端产物），`fork-<version>` 这个 tag 不能已存在。
+   校验不过直接失败，不占用构建机。
+2. 三个构建 job 共用同一个 `ONETHU_FORK_VERSION`：桌面端由 `build-fork.mjs` 复制一份分叉
+   配置到临时目录、只改 `version` 再交给 tauri；Android 端由 `build-fork-apk.sh` 做同样的事。
+   工作区文件不改，仓库里的版本号仍是默认值。
+3. `publish` job 收齐三端产物，用 `apps/desktop/scripts/make-release-manifest.mjs` 生成
+   `latest.json`（缺平台、或只剩未签名 APK 都会硬失败），以 `fork-<version>` 为 tag 建
+   Release，最后回读 `releases/latest/download/latest.json` 复核清单真的可解析。
+
+`version` 留空则沿用 `tauri.fork.conf.json` 里的值；只验证构建链时不要勾 `release`，
+否则会真的建出一个 Release（tag 已存在时 `guard` 会先拦下，避免覆盖已发布的内容）。
+
 ## 8. Android 发布签名凭据
 
 `build-release-apk.sh` 的签名读 4 个环境变量：`ONETHU_KEYSTORE`、`ONETHU_KS_PASS`、

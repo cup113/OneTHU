@@ -31,9 +31,51 @@ on:
         description: "同时构建 Android 分叉包（包名 app.onethu.desktop.fork，签名读 ANDROID_* secret）"
         type: boolean
         default: false
+      version:
+        description: "分叉版本覆盖（形如 0.11.3-2，留空用 tauri.fork.conf.json）。带 release 时必填"
+        type: string
+        default: ""
+      release:
+        description: "构建后发布 GitHub Release：tag 为 fork-<version>，附三端产物与 latest.json（需同时勾 fork 与 android）"
+        type: boolean
+        default: false
 
 jobs:
+  guard:
+    # 输入组合在开始时校验：等三个 job 跑完才发现「release 没勾 android」是最贵的失败方式
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate inputs
+        env:
+          RELEASE: ${{ inputs.release }}
+          FORK: ${{ inputs.fork }}
+          ANDROID: ${{ inputs.android }}
+          ONLY_WINDOWS: ${{ inputs.only_windows }}
+          RUNNER: ${{ inputs.runner }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "$VERSION" ] && ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$'; then
+            echo "::error::version 必须形如 <主>.<次>.<补丁>-<纯数字>（如 0.11.3-2），当前是 $VERSION"
+            exit 1
+          fi
+          if [ "$RELEASE" = "true" ]; then
+            [ "$FORK" = "true" ] || { echo "::error::release 需要同时勾 fork"; exit 1; }
+            [ "$ANDROID" = "true" ] || { echo "::error::release 需要同时勾 android（清单要求三端齐全）"; exit 1; }
+            [ -n "$VERSION" ] || { echo "::error::release 需要显式给 version"; exit 1; }
+            # 三端齐全才谈发布：只跑 Windows、或只跑自建 Windows 机，都凑不出 macOS 产物
+            [ "$ONLY_WINDOWS" != "true" ] || { echo "::error::release 不能勾 only_windows（缺 macOS 产物，清单会拒绝生成）"; exit 1; }
+            [ "$RUNNER" != "self-hosted" ] || { echo "::error::release 需要 github-hosted runner（自建机只有 Windows，凑不出三端）"; exit 1; }
+            if git ls-remote --tags --exit-code origin "refs/tags/fork-$VERSION" >/dev/null 2>&1; then
+              echo "::error::tag fork-$VERSION 已存在：改版本号，或先删掉旧 Release（覆盖会让已下载的客户端清单与产物不一致）"
+              exit 1
+            fi
+          fi
+          echo "· 输入校验通过（fork=$FORK android=$ANDROID release=$RELEASE version=${VERSION:-<配置里的版本>}）"
+
   desktop:
+    needs: guard
     # 手动触发可只跑 Windows（矩阵动态生成）；不分叉时恒为双平台
     strategy:
       fail-fast: false
@@ -92,6 +134,8 @@ jobs:
         run: node --import ./tools/ts-resolve-register.mjs tools/desktop-keepalive-test.mjs
       - name: Check fork build isolation
         run: node tools/fork-build-test.mjs
+      - name: Check release manifest
+        run: node tools/release-manifest-test.mjs
       - name: Check cloud account boundaries
         run: node tools/seafile-account-lifecycle-test.mjs
       - name: Check authentication recovery and account ownership
@@ -138,6 +182,8 @@ jobs:
           SCCACHE_GHA_ENABLED: "true"
           TAURI_SIGNING_PRIVATE_KEY: ""
           TRACE_AMAP_KEY: ${{ secrets.TRACE_AMAP_KEY }}
+          # 版本覆盖（可选）：build-fork.mjs 用它替换分叉配置里的 version，并注入前端
+          ONETHU_FORK_VERSION: ${{ inputs.version }}
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -156,6 +202,7 @@ jobs:
     # 签名材料由 secret 落盘到临时目录；**没配 secret 时只出未签名包**（文件名带
     # -unsigned），用于验证构建链，不会被误当成可发布产物。
     if: github.event_name == 'workflow_dispatch' && inputs.android
+    needs: guard
     runs-on: ubuntu-latest
     env:
       # NDK 只提供 clang/sysroot（rquickjs 的 bindgen 与链接器要用），AGP 不校验具体版本
@@ -221,6 +268,7 @@ jobs:
       - name: Build fork APK
         env:
           ONETHU_APK_OUT: ${{ runner.temp }}/apk
+          ONETHU_FORK_VERSION: ${{ inputs.version }}
           ONETHU_KS_PASS: ${{ secrets.ANDROID_KS_PASS }}
           ONETHU_KEY_PASS: ${{ secrets.ANDROID_KEY_PASS }}
           ONETHU_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -233,3 +281,87 @@ jobs:
           name: onethu-android-fork
           path: ${{ runner.temp }}/apk/*.apk
           if-no-files-found: error
+
+  publish:
+    # 手动发版：三端产物 + latest.json 一起发。tag 用 `fork-<version>`，**不用 v***（会与上游
+    # 将来的同名 tag 撞车，也会让人误以为是官方发布）。清单的消费方是客户端
+    # `lib/updater.ts`：`releases/latest/download/latest.json`，因此这个 Release 必须是
+    # 最新的正式发布（不能是 draft 或 prerelease）。
+    if: github.event_name == 'workflow_dispatch' && inputs.release
+    needs: [guard, desktop, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: onethu-*-fork
+          path: release-artifacts
+      - name: Build latest.json
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          node apps/desktop/scripts/make-release-manifest.mjs \
+            --dir release-artifacts \
+            --version "$VERSION" \
+            --out release-out/latest.json \
+            --releasedAt "$(date -u +%F)" \
+            --notes "基于上游的分叉构建 $VERSION。后台常驻可选悬浮球或托盘；网关会话仍在线时自动重置并重试一次登录入口。"
+      - name: Write release notes
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          mkdir -p release-out
+          {
+            echo "# OneTHU-Fork $VERSION"
+            echo
+            echo "本仓是 smartThise/OneTHU 的分叉，这是分叉自己的构建，不是官方发布。"
+            echo "打包标识 app.onethu.desktop.fork，可与官方版并存安装；更新源指向本仓库。"
+            echo
+            echo "| 平台 | 文件 |"
+            echo "| --- | --- |"
+            for f in "$(find release-artifacts -name '*-setup.exe' | head -1)" \
+                     "$(find release-artifacts -name '*.dmg' | head -1)" \
+                     "$(find release-artifacts -name '*.apk' | head -1)"; do
+              [ -n "$f" ] && echo "| — | \`$(basename "$f")\` |"
+            done
+            echo
+            echo "\`latest.json\` 是按平台的更新清单（含大小与 SHA-256），客户端下载后流式校验。"
+          } > release-out/NOTES.md
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          # 只发三端安装包与清单；便携 exe（onethu.exe）不进 Release
+          mapfile -t FILES < <(find release-artifacts -type f \
+            \( -name '*.exe' -o -name '*.dmg' -o -name '*.apk' \) | grep -v '/onethu\.exe$')
+          printf '%s\n' "${FILES[@]}"
+          gh release create "fork-$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "OneTHU-Fork $VERSION" \
+            --notes-file release-out/NOTES.md \
+            "${FILES[@]}" release-out/latest.json
+      - name: Verify manifest resolves
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          # 客户端读的就是 releases/latest/download/latest.json：能在这一步失败，比等用户发现好
+          curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/latest.json" -o /tmp/latest.json
+          node -e '
+            const m = JSON.parse(require("node:fs").readFileSync("/tmp/latest.json", "utf8"));
+            const keys = ["windows", "macos", "android"];
+            for (const k of keys) {
+              if (!m.assets?.[k]?.url) { console.error(`✗ 清单缺少 ${k} 资产`); process.exit(1); }
+            }
+            if (m.version !== process.argv[1]) { console.error(`✗ 清单版本 ${m.version} 与输入 ${process.argv[1]} 不一致`); process.exit(1); }
+            console.log(`✓ 清单可解析：${m.version}（${keys.map((k) => m.assets[k].url).join(", ")}）`);
+          ' "$VERSION"

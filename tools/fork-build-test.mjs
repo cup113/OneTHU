@@ -95,11 +95,20 @@ assert.ok(
 );
 
 const apk = read("apps/desktop/scripts/build-fork-apk.sh");
+/* 两个命令都走 $CONF_ARG：默认就是分叉配置，版本被覆盖时指向它的临时副本 */
 assert.ok(
-  /tauri android init[^\n]*--config "\$FORK_CONF_REL"/.test(apk) || /tauri android init[^\n]*--config/.test(apk),
-  "build-fork-apk.sh 的 android init 没带 --config：生成的工程会是正式版包名",
+  /tauri android init[^\n]*--config "\$CONF_ARG"/.test(apk),
+  "build-fork-apk.sh 的 android init 没带 --config \"$CONF_ARG\"：生成的工程会是正式版包名",
 );
-assert.ok(/tauri android build[^\n]*--config "\$FORK_CONF_REL"/.test(apk), "build-fork-apk.sh 的 android build 没带 --config");
+assert.ok(/tauri android build[^\n]*--config "\$CONF_ARG"/.test(apk), "build-fork-apk.sh 的 android build 没带 --config \"$CONF_ARG\"");
+assert.ok(
+  /CONF_ARG="\$FORK_CONF_REL"/.test(apk),
+  "build-fork-apk.sh 的 $CONF_ARG 默认值必须是分叉配置（$FORK_CONF_REL）",
+);
+assert.ok(
+  /VERSION="\$\{ONETHU_FORK_VERSION:-/.test(apk),
+  "build-fork-apk.sh 没有读 ONETHU_FORK_VERSION：手动发版的版本号传不进 APK",
+);
 assert.ok(/applicationId = \\"\$IDENTIFIER\\"/.test(apk), "build-fork-apk.sh 没有在编译前校验生成的 applicationId");
 assert.ok(/grep -qF "package: name='\$IDENTIFIER'"/.test(apk), "build-fork-apk.sh 没有在产物上复核包名");
 /* 签名缺失时必须改名：否则一个未签名包装着发布包的名字传出去。
@@ -155,8 +164,48 @@ assert.ok(
   "generate 必须给 store/key 写同一个口令：PKCS12 只有一个口令，分开写 apksigner 解不开私钥",
 );
 
+/* ---------- 手动发版（version / release 输入 + 发布 job） ---------- */
+const buildFork = read("apps/desktop/scripts/build-fork.mjs");
+/* 认 `process.env.ONETHU_FORK_VERSION`：注释里提到这个名字不算真的读了它 */
+assert.ok(
+  /process\.env\.ONETHU_FORK_VERSION/.test(buildFork),
+  "build-fork.mjs 没有读 ONETHU_FORK_VERSION：手动发版的版本号传不进桌面端",
+);
+/* 认 `{ ...conf, version: override }`：只写 `{ version }` 会丢掉 productName/identifier */
+assert.ok(
+  /\{\s*\.\.\.conf,\s*version: override\s*\}/.test(buildFork),
+  "build-fork.mjs 的版本覆盖必须整份复制分叉配置（{ ...conf, version }），否则临时配置丢了标识",
+);
+assert.ok(/\n\s{6}version:[^]*?type: string/.test(wf), "release.yml 缺少 version 输入：无法手动指定发版版本号");
+assert.ok(/\n\s{6}release:[^]*?type: boolean/.test(wf), "release.yml 缺少 release 输入：无法一键发布");
+assert.ok(/ONETHU_FORK_VERSION: \$\{\{ inputs\.version \}\}/.test(wf), "构建步骤没把 version 输入传成 ONETHU_FORK_VERSION");
+/* 发版要三端齐全：输入组合在开始就校验，别等三个 job 跑完才失败 */
+assert.ok(/Validate inputs/.test(wf), "release.yml 缺少输入校验步骤");
+assert.ok(/if \[ "\$RELEASE" = "true" \][^]*?exit 1/.test(wf), "输入校验没有对 release 的组合做拦截");
+/* 发布 job */
+assert.ok(/\n  publish:/.test(wf), "release.yml 缺少 publish job：release 输入无实际动作");
+assert.ok(
+  /publish:[\s\S]{0,400}?permissions:\s*\n\s+contents: write/.test(wf),
+  "publish job 没有 contents: write：建 Release 会被 token 权限拒绝",
+);
+assert.ok(
+  /gh release create "fork-\$VERSION"/.test(wf),
+  "发布 tag 必须是 fork-<version>：`v*` 会与上游将来的同名 tag 撞车",
+);
+assert.ok(!/gh release create "v\$/.test(wf), "发布 tag 不能用 v* 前缀");
+assert.ok(
+  /make-release-manifest\.mjs/.test(wf),
+  "publish job 没有用 make-release-manifest.mjs 生成 latest.json",
+);
+/* 认真正的回读命令：注释里提到那个地址不算 */
+assert.ok(
+  /curl -fsSL "https:\/\/github\.com\/\$GITHUB_REPOSITORY\/releases\/latest\/download\/latest\.json"/.test(wf),
+  "publish job 没有回读客户端真正读取的 latest.json 地址：清单坏了要在这里失败",
+);
+
 console.log(
   `分叉构建：release.yml 仅手动触发（含 fork/android 输入）✓ / 标识 ${fork.identifier} 与正式版分离 ✓ / ` +
     `版本 ${fork.version} 带尾巴 ✓ / 更新源 ${"cup113/OneTHU"} 且无上游云盘镜像 ✓ / 构建入口与产物自校验 ✓ / ` +
-    `Android 包名与签名缺省改名 ✓ / 签名材料编译前自检 + PKCS12 单口令 ✓`,
+    `Android 包名与签名缺省改名 ✓ / 签名材料编译前自检 + PKCS12 单口令 ✓ / ` +
+    `手动发版（version + release → fork-<version> Release 与 latest.json）✓`,
 );

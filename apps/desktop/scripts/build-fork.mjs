@@ -14,10 +14,15 @@
  *   pnpm --filter @onethu/desktop build:fork         # 只出前端 dist
  *   pnpm --filter @onethu/desktop tauri:build:fork   # 连 tauri 打包（可再跟 --target / --no-bundle）
  *
+ * 版本覆盖：`ONETHU_FORK_VERSION=0.11.3-2`（CI 的手动发版输入走这条）。覆盖时脚本把分叉配置
+ * 复制一份到临时目录、只改 version 再传给 tauri —— 不改工作区文件，也不依赖 `--config`
+ * 的合并顺序（后者在 Windows 下还要跟 shell 引号纠缠）。
+ *
  * 守卫：tools/fork-build-test.mjs（配置与开关的形状），以及本脚本末尾的产物校验。
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -32,7 +37,8 @@ const frontendOnly = argv.includes("--frontend");
 const passthrough = argv.filter((a) => a !== "--frontend");
 
 const conf = JSON.parse(readFileSync(FORK_CONF, "utf8"));
-const version = String(conf.version ?? "");
+const override = (process.env.ONETHU_FORK_VERSION ?? "").trim();
+const version = override || String(conf.version ?? "");
 /* 预发布段只能是数字（Windows MSI 的硬限制，实测报错：
  * "optional pre-release identifier in app version must be numeric-only and cannot be greater than 65535
  *  for msi target"）。所以分叉版本形如 0.11.2-1、0.11.2-2，不能写 0.11.2-fork.1。 */
@@ -54,6 +60,16 @@ if (String(conf.identifier ?? "") === "app.onethu.desktop") {
 }
 
 const ENV = { ...process.env, ONETHU_FORK: "1", ONETHU_VERSION: version };
+
+/** 版本被覆盖时给 tauri 一份临时配置：整份复制分叉配置，只换 version */
+function configArg() {
+  if (!override || override === String(conf.version ?? "")) return FORK_CONF_REL;
+  const dir = mkdtempSync(join(tmpdir(), "onethu-fork-conf-"));
+  const runtime = join(dir, "tauri.fork.conf.json");
+  writeFileSync(runtime, `${JSON.stringify({ ...conf, version: override }, null, 2)}\n`, "utf8");
+  console.log(`· 分叉版本按输入覆盖：${conf.version} → ${override}（临时配置 ${runtime}）`);
+  return runtime;
+}
 
 function run(cmd, args) {
   const r = spawnSync(cmd, args, {
@@ -81,7 +97,7 @@ const bundleArgs = explicitBundles || noBundle || !defaultBundles() ? [] : ["--b
 if (frontendOnly) {
   run("pnpm", ["exec", "vite", "build"]);
 } else {
-  run("pnpm", ["exec", "tauri", "build", "--config", FORK_CONF_REL, ...bundleArgs, ...passthrough]);
+  run("pnpm", ["exec", "tauri", "build", "--config", configArg(), ...bundleArgs, ...passthrough]);
 }
 
 /* 开关没生效就等于编了个正式版（更新源还指向上游）：这里直接拦下。

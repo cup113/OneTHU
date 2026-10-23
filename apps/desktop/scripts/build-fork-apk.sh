@@ -112,7 +112,7 @@ PY
 fi
 
 # ---------- 3. 分叉不变量（在编译之前拦住，别白烧十分钟）----------
-VERSION="$(conf_get "$FORK_CONF" version)"
+VERSION="${ONETHU_FORK_VERSION:-$(conf_get "$FORK_CONF" version)}"
 PRODUCT="$(conf_get "$FORK_CONF" productName)"
 IDENTIFIER="$(conf_get "$FORK_CONF" identifier)"
 
@@ -127,14 +127,24 @@ IDENTIFIER="$(conf_get "$FORK_CONF" identifier)"
   || die "分叉 identifier「$IDENTIFIER」不是合法的 Android 包名"
 echo "· 分叉不变量通过：$PRODUCT $VERSION / $IDENTIFIER"
 
+# 版本按输入覆盖（CI 的手动发版）：整份复制分叉配置、只改 version，不动工作区文件
+CONF_ARG="$FORK_CONF_REL"
+if [ "$VERSION" != "$(conf_get "$FORK_CONF" version)" ]; then
+  mkdir -p "$OUT_DIR"
+  CONF_ARG="$OUT_DIR/fork-runtime.conf.json"
+  node -e 'const fs=require("node:fs");const c=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));c.version=process.argv[2];fs.writeFileSync(process.argv[3],JSON.stringify(c,null,2)+"\n","utf8")' \
+    "$FORK_CONF" "$VERSION" "$CONF_ARG" || die "写临时分叉配置失败：$CONF_ARG"
+  echo "· 分叉版本按输入覆盖：$(conf_get "$FORK_CONF" version) → $VERSION"
+fi
+
 # ---------- 4. 工程就位：每次从零生成 ----------
 # 入库的 gen/android 是指向外置盘的符号链接（本机发布线用），CI 上必须清掉再生成，
 # 否则 tauri 会往一个不存在的目标里写，或者复用上一轮的旧 applicationId。
 if [ -e "$GEN" ] || [ -L "$GEN" ]; then
   rm -rf "$GEN"
 fi
-echo "· 生成 Android 工程（tauri android init，配置 $FORK_CONF_REL）"
-( cd "$DESKTOP" && pnpm exec tauri android init --ci --skip-targets-install --config "$FORK_CONF_REL" )
+echo "· 生成 Android 工程（tauri android init，配置 $CONF_ARG）"
+( cd "$DESKTOP" && pnpm exec tauri android init --ci --skip-targets-install --config "$CONF_ARG" )
 
 GRADLE_APP="$GEN/app/build.gradle.kts"
 [ -f "$GRADLE_APP" ] || die "工程没生成出来：$GRADLE_APP 不存在"
@@ -150,7 +160,7 @@ mkdir -p "$OUT_DIR"
 export ONETHU_FORK=1
 export ONETHU_VERSION="$VERSION"
 echo "· 开始构建（aarch64，release）"
-( cd "$DESKTOP" && pnpm exec tauri android build --apk --target aarch64 --config "$FORK_CONF_REL" )
+( cd "$DESKTOP" && pnpm exec tauri android build --apk --target aarch64 --config "$CONF_ARG" )
 
 UNSIGNED="$(find "$GEN/app/build/outputs/apk" -name '*-unsigned.apk' 2>/dev/null | head -1 || true)"
 [ -n "$UNSIGNED" ] || die "没找到未签名 APK（$GEN/app/build/outputs/apk）"
