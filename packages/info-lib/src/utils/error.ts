@@ -19,7 +19,10 @@ export type LoginPreparationReason =
     | "trust-limit"
     | "unexpected-page"
     | "unsafe-confirmation"
-    | "confirmation-loop";
+    | "confirmation-loop"
+    /** 凭证入口被甩回校园网关自己的已登录界面（WebVPN 会话还活着）：
+     *  网关因此不再发起 OAuth，入口拿不到统一认证表单。与「页面变体」区分开。 */
+    | "gateway-session-pinned";
 
 /** Safe, machine-readable login diagnostics. Never attach response HTML or session URLs. */
 export class LoginPreparationError extends LoginError {

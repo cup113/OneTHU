@@ -3268,6 +3268,7 @@ const locale = {
     "login.error.changeMethod": "当前验证码已绑定原验证方式。请返回登录页重新登录，再选择其他方式。",
     "login.error.confirmationLoop": "统一认证反复要求确认设备，本次登录已停止。请稍等后重试；也可到 id.tsinghua.edu.cn 检查信任设备。",
     "login.error.cooldown": "刚刚已尝试登录，请等待 {seconds} 秒后再试。刷新不会缩短等待时间。",
+    "login.error.gatewaySession": "校园网关的登录状态还在，统一认证没有重新发起。已自动重置网关会话并重试一次；若仍失败，请退出应用后重新登录。",
     "login.error.gatewayUnavailable": "学校登录或 WebVPN 暂时未返回可用页面。请稍后重试，避免连续刷新。",
     "login.error.inProgress": "已有登录正在进行，请完成验证，或返回登录页后再试。",
     "login.error.invalidForm": "统一认证返回了无法安全处理的登录表单，已停止提交。请稍后重试；若仍失败，请复制诊断摘要。",

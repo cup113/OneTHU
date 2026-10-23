@@ -14,11 +14,11 @@ import { t as i18n, msg as i18nMsg } from "../i18n/index.js";
  * - 2FA futures：lib 的同步 hooks 桥接 OneTHU 的两段式 UI（选方式→发码→输码）
  * - 登录/验证/登出/会话守卫（libEnsureSession：lib verifyAndReLogin 语义）
  */
-import { nativeFetch, nativeSeedCookies, nativeSessionEpoch, isTauri } from "./transport.js";
+import { nativeFetch, nativeCookieClear, nativeCookieClearDomains, nativeSeedCookies, nativeSessionEpoch, isTauri } from "./transport.js";
 import { createAuthCookieBoundary } from "./authCookieBoundary.js";
 import { markLoginAttempt, markLoginSucceeded, loginCooldownLeftMs } from "./loginGate.js";
 import { networkLogUrl } from "./networkLog.js";
-import { http, session } from "./clients.js";
+import { bytesToBase64, http, session, setLastAuthEntry } from "./clients.js";
 import { setPlatformFetch, setPlatformClearCookies, uFetch } from "@onethu/info-lib/network";
 const SAVE_FINGER_URL = "https://id.tsinghua.edu.cn/b/doubleAuth/personal/saveFinger";
 import { InfoHelper, roam, verifyAndReLogin, getOutstandingLoginIdentity } from "@onethu/info-lib";
@@ -228,6 +228,75 @@ helper.beforeLoginAttemptHook = async () => {
 helper.afterLoginSuccessHook = () => {
   markLoginSucceeded();
   void log("AUTH-PHASE session-established");
+};
+// 网关仍处于登录态时，凭证入口会被甩回它自己的应用页或门户首页（现场：
+// 2026-10-22T15:08 `/login?oauth_login=true` 302 直落网络学堂应用页 2760 字符；
+// 2026-10-23 清掉 webvpn 域后仍落到门户首页，正文写着「个人信息 / 注销」）。
+// 只清 webvpn 域不够：wengine 票挂在 `.tsinghua.edu.cn` 上，按 webvpn 后缀匹配不到。
+// 所以这里先让网关自己注销（与门户「注销」同一端点），再连父域一起清票，
+// lib 随即重取入口一次；任何一步失败都返回 false，由 lib 回退原判定路径。
+const GATEWAY_LOGOUT_URL = "https://webvpn.tsinghua.edu.cn/logout";
+
+helper.onStaleGatewaySession = async () => {
+  try {
+    await nativeFetch(GATEWAY_LOGOUT_URL, { method: "GET" }).catch(() => null);
+    await nativeCookieClearDomains(["webvpn.tsinghua.edu.cn", "tsinghua.edu.cn"]);
+    http.jar.clear("webvpn.tsinghua.edu.cn");
+    http.jar.clear("tsinghua.edu.cn");
+    void log("AUTH-PHASE gateway-clear (logout + tsinghua.edu.cn)");
+    return true;
+  } catch {
+    return false;
+  }
+};
+helper.onAuthEntry = (entry) => {
+  const text = `gateway=${entry.gateway ? 1 : 0} cleared=${entry.cleared ? 1 : 0} retried=${entry.retried ? 1 : 0} status=${entry.status} chars=${entry.chars} final=${entry.finalPath}`;
+  setLastAuthEntry(text);
+  void log(`AUTH-ENTRY ${text}`);
+};
+/* 未识别认证页的本地留证（2026-10-23 用户要求）：标准输出在打包壳里看不见，
+ * 于是把页面原文落到临时目录并通过诊断摘要给出路径。文件里含学校页面原文（可能有
+ * 隐藏令牌），只在用户本机、只为排障，看完应删除；不允许进任何上报口径。 */
+const AUTH_SNAPSHOT_LIMIT = 1_500_000;
+helper.onAuthPageSnapshot = (snapshot) => {
+  void (async () => {
+    const finalPath = (() => {
+      try {
+        const u = new URL(snapshot.finalUrl);
+        return u.origin + u.pathname;
+      } catch {
+        return "[invalid URL]";
+      }
+    })();
+    if (snapshot.chars > AUTH_SNAPSHOT_LIMIT) {
+      setLastAuthEntry(`reason=${snapshot.reason} stage=${snapshot.stage} chars=${snapshot.chars} final=${finalPath} | 页面过大，未留证`);
+      return;
+    }
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const header = [
+        `reason=${snapshot.reason}`,
+        `stage=${snapshot.stage}`,
+        `final=${finalPath}`,
+        `chars=${snapshot.chars}`,
+        `saved=${new Date().toISOString()}`,
+        "本文件是排障用页面原文快照，可能含隐藏令牌：看完请删除，不要外传。",
+        "",
+        "-----8<----- HTML -----8<-----",
+        "",
+      ].join("\n");
+      const bytes = new TextEncoder().encode(header + snapshot.html);
+      const path = await invoke<string>("write_temp_file", {
+        name: `auth-entry-${stamp}-${snapshot.reason}.html`,
+        dataBase64: bytesToBase64(bytes),
+      });
+      setLastAuthEntry(`snapshot=${path} reason=${snapshot.reason} stage=${snapshot.stage} chars=${snapshot.chars} final=${finalPath}`);
+      void log(`AUTH-SNAPSHOT ${path} reason=${snapshot.reason} stage=${snapshot.stage} chars=${snapshot.chars} final=${finalPath}`);
+    } catch (e) {
+      setLastAuthEntry(`留证失败：${e instanceof Error ? e.message : String(e)} | reason=${snapshot.reason} chars=${snapshot.chars} final=${finalPath}`);
+    }
+  })();
 };
 
 /* ═══════════ GitLab 会话票：跨进程保活 ═══════════

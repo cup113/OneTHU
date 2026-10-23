@@ -3268,6 +3268,7 @@ const locale = {
     "login.error.changeMethod": "The current code is tied to the original verification method. Return to sign-in and choose another method in a new verification session.",
     "login.error.confirmationLoop": "University authentication repeatedly requested device confirmation, so this sign-in was stopped. Wait before retrying, or check trusted devices at id.tsinghua.edu.cn.",
     "login.error.cooldown": "A sign-in was just attempted. Wait {seconds} seconds before trying again. Refreshing will not shorten the wait.",
+    "login.error.gatewaySession": "The campus gateway session is still signed in, so university authentication never restarted. The gateway session was reset and the sign-in retried once; if it still fails, restart the app and sign in again.",
     "login.error.gatewayUnavailable": "University sign-in or WebVPN is temporarily returning an unavailable page. Please wait before retrying and avoid repeated refreshes.",
     "login.error.inProgress": "A sign-in is already in progress. Complete verification, or go back to the sign-in page to start again.",
     "login.error.invalidForm": "University authentication returned a sign-in form that cannot be processed safely. Submission was stopped. Try again later; if it persists, copy the diagnostic summary.",

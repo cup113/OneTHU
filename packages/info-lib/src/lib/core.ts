@@ -23,7 +23,7 @@ import {
 } from "../constants/strings";
 import * as cheerio from "cheerio";
 import {InfoHelper} from "../index";
-import {clearCookies, getRedirectUrl, platformFetchWith, stringify, uFetch} from "../utils/network";
+import {clearCookies, getRedirectUrl, platformFetchWith, ResponseStatusError, stringify, uFetch} from "../utils/network";
 import {IdAuthError, LibError, LoginError, LoginPreparationError, UrlError} from "../utils/error";
 import {sm2} from "sm-crypto";
 
@@ -255,11 +255,29 @@ export const passwordlessEntry = async (helper: InfoHelper, entryHtml: string): 
  * Entry pages may contain credentials, trusted confirmation, 2FA or an already
  * successful session; missing a key alone does not distinguish those states.
  */
+/** 现场留证：只把「无法识别的认证页」交给宿主落盘（隐私边界由宿主决定，本库不落盘）。
+ *  任何宿主实现异常都不得改变登录判定。 */
+function snapshotAuthPage(
+    helper: InfoHelper,
+    stage: LoginPreparationStage,
+    reason: string,
+    html: string,
+    finalUrl: string,
+): void {
+    if (!helper.onAuthPageSnapshot) return;
+    try {
+        helper.onAuthPageSnapshot({stage, reason, finalUrl, chars: html.length, html});
+    } catch {
+        /* 留证失败不影响登录 */
+    }
+}
+
 export const idLoginResponse = async (
     helper: InfoHelper,
     entryHtml: string,
     idLoginUrl: string,
     scheme: "i_user" | "username",
+    entryUrl?: string,
 ): Promise<string> => {
     let html = entryHtml;
     // At most one confirmation POST followed by at most one credential POST.
@@ -274,23 +292,35 @@ export const idLoginResponse = async (
             const returnedKey = $("#sm2publicKey");
             const hasKey = !!(returnedKey.text().trim() || returnedKey.attr("value")?.trim());
             const failure = preparationFailure(response, stage);
-            if (!hasKey && (failure.reason === "trust-limit" || failure.reason === "access-restricted")) throw failure;
+            if (!hasKey && (failure.reason === "trust-limit" || failure.reason === "access-restricted")) {
+                snapshotAuthPage(helper, stage, failure.reason, response, idLoginUrl);
+                throw failure;
+            }
             $("script, style, template, noscript, [hidden], [aria-hidden='true']").remove();
             const note = $("#msg_note").text().trim();
             if (note) throw new LoginError(note);
-            throw hasKey ? new LoginPreparationError("unexpected-page", stage) : failure;
+            const classified = hasKey ? new LoginPreparationError("unexpected-page", stage) : failure;
+            snapshotAuthPage(helper, stage, classified.reason, response, idLoginUrl);
+            throw classified;
         }
         if (isFinishedIdEntry(html, scheme)) return html;
         const failure = preparationFailure(html, stage);
-        if (failure.reason === "trust-limit" || failure.reason === "access-restricted") throw failure;
-        if (confirmationCount === 1) {
-            if (cheerio.load(html)("form[action*='checkSingle'], form[action*='security_check']").length) {
-                throw new LoginPreparationError("confirmation-loop", stage);
-            }
+        if (failure.reason === "trust-limit" || failure.reason === "access-restricted") {
+            snapshotAuthPage(helper, stage, failure.reason, html, entryUrl ?? idLoginUrl);
             throw failure;
         }
+        if (confirmationCount === 1) {
+            const loop = cheerio.load(html)("form[action*='checkSingle'], form[action*='security_check']").length
+                ? new LoginPreparationError("confirmation-loop", stage)
+                : failure;
+            snapshotAuthPage(helper, stage, loop.reason, html, entryUrl ?? idLoginUrl);
+            throw loop;
+        }
         const confirmed = await passwordlessEntry(helper, html);
-        if (confirmed === null) throw failure;
+        if (confirmed === null) {
+            snapshotAuthPage(helper, stage, failure.reason, html, entryUrl ?? idLoginUrl);
+            throw failure;
+        }
         html = confirmed;
     }
     throw new LoginPreparationError("confirmation-loop", "trusted-confirmation");
@@ -363,6 +393,65 @@ const twoFactorAuth = async (helper: InfoHelper): Promise<string> => {
     return await uFetch(ID_HOST_URL + o3.redirectUrl);
 };
 
+/** 网关（WebVPN/wengine）自己的落地页。凭证入口被甩到这里，就等于「网关仍认为已登录」：
+ *  2026-10-22T15:08 现场——`/login?oauth_login=true` 302 直接落到网络学堂应用页（2760 字符），
+ *  根本没发起 OAuth，解析器于是只报 unexpected-page；同日 16:25 的同一条命令在网关会话失效后
+ *  走 oauth→id 登录表单（17524 字符）并成功。两者的差别只在网关会话，不在页面解析。 */
+const GATEWAY_ORIGIN = "https://webvpn.tsinghua.edu.cn";
+
+const isGatewayLanding = (finalUrl: string): boolean => {
+    try {
+        const url = new URL(finalUrl);
+        if (url.origin !== GATEWAY_ORIGIN) return false;
+        const path = url.pathname;
+        // 两种形态都算「网关仍处于登录态」：
+        // ① 请求被转发进某个应用 /https/<hex>/… 或 /http-<port>/<hex>/…（2026-10-22 实录）；
+        // ② 被 302 回门户首页 / ——页面正文含「个人信息 / 注销」，证明会话还在
+        //    （2026-10-23 实录：清掉 webvpn 域后仍命中这一态，因为 wengine 票挂在
+        //    .tsinghua.edu.cn 上没被清）。
+        // `/login` 单独出现（200 且没有跳转）意味着网关自己也没登录，那不是本类故障。
+        return path.startsWith("/https/") || path.startsWith("/http-") || path === "/";
+    } catch {
+        return false;
+    }
+};
+
+/** 诊断用的脱敏落点：只保留 origin+path（查询串/票据一律不进日志）。 */
+const entryLogPath = (url: string): string => {
+    try {
+        const u = new URL(url);
+        return u.origin + u.pathname;
+    } catch {
+        return "[invalid URL]";
+    }
+};
+
+/** 取凭证入口。必须拿到「终到 URL」才能区分「网关短路」与「登录页变体」，故走
+ *  platformFetchWith（uFetch 只回文本）；错误语义与 uFetch 保持一致。 */
+const fetchCredentialEntry = async (): Promise<{html: string; status: number; finalUrl: string}> => {
+    if (getRedirectLocation) {
+        // Patches for OpenHarmony: 平台不跟随重定向，逐跳问 Location（保持原行为）
+        const oauthUrl = await getRedirectLocation(WEB_VPN_OAUTH_LOGIN_URL);
+        if (!oauthUrl) {
+            throw new LoginError("Failed to get oauth url.");
+        }
+        await uFetch(oauthUrl);
+        const idUrl = await getRedirectLocation(oauthUrl);
+        if (!idUrl) {
+            throw new LoginError("Failed to get id url.");
+        }
+        return {html: await uFetch(idUrl), status: 200, finalUrl: idUrl};
+    }
+    const response = await platformFetchWith(WEB_VPN_OAUTH_LOGIN_URL, {
+        headers: {"Content-Type": "application/x-www-form-urlencoded"},
+        timeoutMs: 60000,
+    });
+    if (response.status !== 200 && response.status !== 201) {
+        throw new ResponseStatusError(`Unexpected response status code: ${response.status}`, response.status);
+    }
+    return {html: response.text, status: response.status, finalUrl: response.finalUrl || WEB_VPN_OAUTH_LOGIN_URL};
+};
+
 export const login = async (
     helper: InfoHelper,
     userId: string,
@@ -396,21 +485,37 @@ export const login = async (
                 await helper.beforeLoginAttemptHook?.();
                 clearCookies();
                 await helper.clearCookieHandler();
-                let entryHtml = await uFetch(WEB_VPN_OAUTH_LOGIN_URL);
-                if (getRedirectLocation) {
-                    // Patch for OpenHarmony
-                    const oauthUrl = await getRedirectLocation(WEB_VPN_OAUTH_LOGIN_URL);
-                    if (!oauthUrl) {
-                        throw new LoginError("Failed to get oauth url.");
+                let entry = await fetchCredentialEntry();
+                if (isGatewayLanding(entry.finalUrl)) {
+                    // 网关仍在登录态：入口被甩回它自己的应用页，OAuth 不会开始。
+                    // 宿主接了这个钩子才清会话并只重取一次；没接/清不动则保持原行为。
+                    const cleared = (await helper.onStaleGatewaySession?.()) === true;
+                    helper.onAuthEntry?.({
+                        finalPath: entryLogPath(entry.finalUrl),
+                        status: entry.status,
+                        chars: entry.html.length,
+                        gateway: true,
+                        cleared,
+                        retried: false,
+                    });
+                    if (cleared) {
+                        snapshotAuthPage(helper, "credential-entry", "gateway-landing", entry.html, entry.finalUrl);
+                        entry = await fetchCredentialEntry();
+                        if (isGatewayLanding(entry.finalUrl)) {
+                            helper.onAuthEntry?.({
+                                finalPath: entryLogPath(entry.finalUrl),
+                                status: entry.status,
+                                chars: entry.html.length,
+                                gateway: true,
+                                cleared: true,
+                                retried: true,
+                            });
+                            snapshotAuthPage(helper, "credential-entry", "gateway-session-pinned", entry.html, entry.finalUrl);
+                            throw new LoginPreparationError("gateway-session-pinned", "credential-entry");
+                        }
                     }
-                    await uFetch(oauthUrl);
-                    const idUrl = await getRedirectLocation(oauthUrl);
-                    if (!idUrl) {
-                        throw new LoginError("Failed to get id url.");
-                    }
-                    entryHtml = await uFetch(idUrl);
                 }
-                let response = await idLoginResponse(helper, entryHtml, ID_LOGIN_URL, "i_user");
+                let response = await idLoginResponse(helper, entry.html, ID_LOGIN_URL, "i_user", entry.finalUrl);
                 if (isTwoFactorPage(response)) {
                     response = await twoFactorAuth(helper);
                 }

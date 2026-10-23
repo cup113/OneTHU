@@ -13,6 +13,7 @@
     "typecheck": "pnpm -r typecheck",
     "test:onboarding": "node --import ./tools/ts-resolve-register.mjs tools/onboarding-lessons-test.mjs && node --import ./tools/ts-resolve-register.mjs tools/onboarding-navigation-test.mjs && node tools/onboarding-v3-test.mjs",
     "test": "pnpm --filter @onethu/core test",
+    "test:login": "node --import tsx tools/login-public-key-test.mjs && node tools/login-attempt-state-test.mjs && node --import ./tools/ts-resolve-register.mjs tools/network-log-privacy-test.mjs",
     "test:oh": "node tools/madmodel-auth-route-test.mjs && node tools/oh-request-lifecycle-test.mjs && node tools/phone-oh-policy-test.mjs",
     "lint:ui-copy": "node tools/ui-copy-lint.mjs",
     "lint:docs": "node tools/docs-prose-lint.mjs",
