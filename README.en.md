@@ -77,7 +77,7 @@ pnpm install
 pnpm dev
 ```
 
-A browser preview is not the native host. Native builds need Rust and Tauri platform dependencies; Android additionally needs a JDK, SDK and NDK. The active development branch is dev3.
+A browser preview is not the native host: `pnpm dev` starts vite only, and the desktop app runs with `pnpm dev:app`. Native builds need Rust and Tauri platform dependencies; Android additionally needs a JDK, SDK and NDK. The active development branch is dev3.
 
 - [Developer center and builds](docs/en/developers.md)
 - [All contributors and major contributors](docs/en/contributors.md)

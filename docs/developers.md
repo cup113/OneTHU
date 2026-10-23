@@ -19,9 +19,11 @@ pnpm dev
 
 `pnpm dev` 只启动 Vite 前端。使用模拟数据浏览界面，不代表已经验证原生网络、文件、凭据或技能 IPC。
 
+桌面端用 `pnpm dev:app`：一条命令起原生壳，前端由 Tauri 的 `beforeDevCommand` 自己拉起，因此不要再单独跑 `pnpm dev`（vite 钉在 5180 且 strictPort，占用会让启动中止）。macOS 走 `.app` wrapper（TCC 只认 bundle），Windows/Linux 走 `tauri dev`；Windows 上还会把 WebView2 数据目录指到仓库内可写的 `node_modules/.cache/onethu-webview2`，避免默认 profile 出现「进程在、窗口不来」。
+
 ```bash
-# 桌面 Tauri 开发；Windows 可使用跨平台原始入口
-pnpm --filter @onethu/desktop tauri:raw
+# 桌面端开发（macOS 走 wrapper，Windows/Linux 走 tauri dev）
+pnpm dev:app
 # 前端开发构建 / 桌面原生开发包
 pnpm --filter @onethu/desktop build:dev
 pnpm --filter @onethu/desktop tauri:build:dev

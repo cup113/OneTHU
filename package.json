@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "pnpm --filter @onethu/desktop dev",
+    "dev:app": "pnpm --filter @onethu/desktop run dev:app",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test:onboarding": "node --import ./tools/ts-resolve-register.mjs tools/onboarding-lessons-test.mjs && node --import ./tools/ts-resolve-register.mjs tools/onboarding-navigation-test.mjs && node tools/onboarding-v3-test.mjs",

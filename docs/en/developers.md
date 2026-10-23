@@ -19,9 +19,11 @@ pnpm dev
 
 `pnpm dev` starts the Vite frontend only. A fixture-based browser preview does not validate native networking, files, credentials or skill IPC.
 
+The desktop app starts with `pnpm dev:app`: one command boots the native shell, and Tauri's `beforeDevCommand` starts the frontend itself — so do not run `pnpm dev` alongside it (vite is pinned to strict port 5180, and an occupied port aborts startup). macOS goes through the `.app` wrapper (TCC grants permissions only to a bundle); Windows and Linux run `tauri dev`, and on Windows the WebView2 data directory is pointed at the writable `node_modules/.cache/onethu-webview2` inside the repo, so a bad default profile cannot leave a live process with no window.
+
 ```bash
-# Native Tauri development; cross-platform entry for Windows
-pnpm --filter @onethu/desktop tauri:raw
+# Desktop app development (macOS uses the wrapper, Windows/Linux run tauri dev)
+pnpm dev:app
 # Frontend development build / native desktop development package
 pnpm --filter @onethu/desktop build:dev
 pnpm --filter @onethu/desktop tauri:build:dev
