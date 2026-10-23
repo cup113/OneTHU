@@ -142,7 +142,14 @@ grep -rl "onethu.dev.badge.hidden" apps/desktop/dist/assets || echo "正式版�
 - 拉上游用 `git fetch upstream --no-tags`；`git push --tags` / `--follow-tags` 会把上游同名 tag
   推进 fork，是唯一会主动制造冲突的操作。
 - 分叉包的更新源是自己仓库的 Releases（`latest.json`），要在自己仓库里维护这份清单，否则
-  「检查更新」只会报「没查到」。上游的清华云盘镜像在分叉包里被刻意关闭。
+  「检查更新」只会报「没查到」。上游的清华云盘镜像在分叉包里被刻意关闭。清单是**发布资产**，
+  名字必须叫 `latest.json`，形状见 `apps/desktop/src/lib/updater.ts` 文件头：版本、`minVersion`、
+  `url`（可写相对名，按 `releases/latest/download/` 解析）、`size`、`sha256`、说明与
+  `assets.android`；`sha256` 由 Rust 侧流式校验，不符直接丢弃文件。
+- 分叉版本形如 `0.11.3-N`，`N` 是分叉自己的发版序号，每次发版加一。版本比较
+  （`lib/update.ts` 的 `isNewer`）把数字预发布段算作第四段，否则 `0.11.3-2` 会被判成与
+  `0.11.3-1` 相等、更新检查静默失效（护栏：`tools/update-version-order-test.mjs`）。
+  正式版 `x.y.z` 的三段语义不变。
 - 分叉包**不能**沿用正式版签名与包名发布 Android 包：同包名换签名会安装失败，升级链也会断。
 - Android 分叉包在 CI 上构建：`.github/workflows/release.yml` 勾 `android` 输入，走
   `apps/desktop/scripts/build-fork-apk.sh`。runner 上从零生成 Android 工程

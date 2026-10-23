@@ -116,6 +116,7 @@ jobs:
           node tools/update-reminder-test.mjs
           node --import ./tools/ts-resolve-register.mjs tools/update-language-test.mjs
           node tools/update-check-lifecycle-test.mjs
+          node --import ./tools/ts-resolve-register.mjs tools/update-version-order-test.mjs
           node --import ./tools/ts-resolve-register.mjs tools/news-language-test.mjs
       - name: Check mobile interaction state
         run: |
