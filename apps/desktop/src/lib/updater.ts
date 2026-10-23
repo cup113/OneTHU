@@ -12,6 +12,10 @@ import { t as i18n, msg as i18nMsg, resolveMessage, type UiText } from "../i18n/
  *
  * 用户要用自己的私源时才展开「高级：自定义更新源」（一个清单 URL）——默认收起。
  *
+ * ## 分叉构建（`ONETHU_FORK=1`）
+ * 主源换成 `cup113/OneTHU` 的 Releases，**不启用**清华云盘镜像（那是上游的分享链接）。
+ * 目的只有一个：分叉包不把用户带到上游安装包。分叉要发版就在自己的仓库里维护 `latest.json`。
+ *
  * 清单形状（GitHub 资产 / 云盘 latest.json 同款；`url` 可写相对名，前端按源解析成绝对地址）：
  * `{ "version": "0.10.1", "minVersion": "0.9.0", "url": "OneTHU_0.10.1_aarch64.dmg",
  *    "size": 9516505, "sha256": "…", "notes": "更新说明", "releasedAt": "2026-10-12",
@@ -28,9 +32,24 @@ import { isAndroidNavigator } from "./androidHost.js";
 import { currentVersion, isNewer } from "./update.js";
 import { logLine } from "./clients.js";
 
-/* ── 官方地址（写死；改地址=改这里） ── */
-export const GITHUB_MANIFEST_URL = "https://github.com/smartThise/OneTHU/releases/latest/download/latest.json";
-export const GITHUB_ASSET_BASE = "https://github.com/smartThise/OneTHU/releases/latest/download/";
+/* ── 官方地址（写死；改地址=改这里） ──
+ * 分叉构建（`__ONETHU_FORK__`，见 scripts/build-fork.mjs）把主源换成自己的发布仓库，
+ * 并且**不退回上游的清华云盘镜像**：分叉包一旦沿上游源检查更新，用户会被带去装上游安装包，
+ * 把分叉整个顶掉（两者打包标识不同，上游包还会覆盖安装）。
+ *
+ * `typeof` 守卫是给离线用例留的：tools/update-check-lifecycle-test.mjs 会把本文件剥掉 import
+ * 后直接执行，那里没有 vite define，裸标识符会抛 ReferenceError。vite 构建时该标识符被替换成
+ * 字面量，`typeof true !== "undefined"` 会被静态折叠，产物里不留运行时判断。*/
+const FORK_BUILD = typeof __ONETHU_FORK__ !== "undefined" && __ONETHU_FORK__;
+/** 分叉自己的发布仓库（要换就改这一处） */
+const FORK_REPO = "cup113/OneTHU";
+const OFFICIAL_REPO = "smartThise/OneTHU";
+const RELEASE_REPO = FORK_BUILD ? FORK_REPO : OFFICIAL_REPO;
+
+export const GITHUB_MANIFEST_URL = `https://github.com/${RELEASE_REPO}/releases/latest/download/latest.json`;
+export const GITHUB_ASSET_BASE = `https://github.com/${RELEASE_REPO}/releases/latest/download/`;
+/** 分叉构建不提供云盘镜像源（那是上游的分享链接） */
+export const CLOUD_MIRROR_ENABLED = !FORK_BUILD;
 export const CLOUD_SHARE_BASE = "https://cloud.tsinghua.edu.cn";
 export const CLOUD_SHARE_TOKEN = "56f78a2a0b144a6ab737";
 /** 云盘镜像里各平台目录（实测形态，2026-10-12） */
@@ -443,7 +462,9 @@ export async function checkForUpdate(opts: {
         if (!asset) throw new Error(i18n("lib.updater.b331bcbd6083", { version: String(m.version), key: String(key) }));
         return finish(m, key, asset, (rel) => (/^https?:/i.test(rel) ? rel : rel));
       } }]
-    : [{ source: "github", run: () => fromGitHub(key) }, { source: "cloud", run: () => fromCloud(key) }];
+    : (CLOUD_MIRROR_ENABLED
+        ? [{ source: "github", run: () => fromGitHub(key) }, { source: "cloud", run: () => fromCloud(key) }]
+        : [{ source: "github", run: () => fromGitHub(key) }]);
 
   for (const step of plan) {
     if (opts.signal?.aborted) throw new DOMException("Cancelled", "AbortError");
