@@ -4,8 +4,16 @@ import { readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { i18nDictionaryGuard } from "../../tools/i18n/vite-guard.mjs";
 
-// 构建时注入版本号（设置页诊断卡显示，确认真机装的是哪个包）
+// 构建时注入版本号（设置页诊断卡显示，确认真机装的是哪个包）。
+// 分叉构建由 scripts/build-fork.mjs 用 ONETHU_VERSION 覆盖成带分叉尾巴的版本（如 0.11.2-fork.1），
+// 让「界面显示的版本」与「安装包版本」是同一个字符串。
 const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version: string };
+const BUILD_VERSION = (process.env.ONETHU_VERSION ?? "").trim() || pkg.version;
+
+/* 分叉构建开关（ONETHU_FORK=1，见 scripts/build-fork.mjs 与 src-tauri/tauri.fork.conf.json）：
+ * 分叉包的打包标识与更新源都必须换掉，否则会顶掉正式版、并把用户带到上游安装包。
+ * 正式版不设该变量 → __ONETHU_FORK__ 折叠为 false，更新源仍是官方双源。 */
+const FORK_BUILD = process.env.ONETHU_FORK === "1";
 
 /* 开发者构建开关：构建前 export ONETHU_DEV=1（见 tools/build-android-dev.sh、tools/build-desktop-dev.sh）。
  * 正式版不设该变量 → __ONETHU_DEV__ 折叠为 false，Layout/main.tsx 里所有 dev 分支（含动态
@@ -27,8 +35,9 @@ function gitCommit(): string {
 
 export default defineConfig({
   define: {
-    __APP_VERSION__: JSON.stringify(pkg.version),
+    __APP_VERSION__: JSON.stringify(BUILD_VERSION),
     __ONETHU_DEV__: JSON.stringify(DEV_BUILD),
+    __ONETHU_FORK__: JSON.stringify(FORK_BUILD),
     __ONETHU_COMMIT__: JSON.stringify(gitCommit()),
     __ONETHU_BUILD_TIME__: JSON.stringify(new Date().toISOString()),
   },
