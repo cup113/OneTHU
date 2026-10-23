@@ -313,6 +313,16 @@ export async function logLine(text: string): Promise<void> {
   }
 }
 
+/* 认证入口的最近一次现场（lib 的 onAuthEntry 回填；只含脱敏落点/长度/判定）。
+ * 诊断摘要用它区分「网关会话还挂着」与「登录页变体」——正文与票据从不进这里。 */
+let lastAuthEntry = "";
+export function setLastAuthEntry(text: string): void {
+  lastAuthEntry = text;
+}
+export function lastAuthEntryText(): string {
+  return lastAuthEntry;
+}
+
 // Keep the diagnostic hook without persisting the page body or hidden fields.
 void (async () => {
   try {

@@ -4,7 +4,7 @@ use tauri::{AppHandle, Manager, Runtime, Window, WindowEvent};
 
 #[path = "desktop_lifecycle_policy.rs"]
 mod policy;
-pub use policy::Lifecycle;
+pub use policy::{KeepAlive, Lifecycle};
 
 struct Windows<'a, R: Runtime>(&'a AppHandle<R>);
 
@@ -13,6 +13,11 @@ impl<R: Runtime> policy::Windows for Windows<'_, R> {
         self.0
             .get_webview_window(crate::overlay_win::OVERLAY_LABEL)
             .is_some_and(|window| window.is_visible().unwrap_or(true))
+    }
+
+    /// 托盘档的载体：只认托盘图标真的在不在，不认档位（建失败/被系统回收都是 false）。
+    fn tray_present(&self) -> bool {
+        crate::tray::present(self.0)
     }
 
     fn hide_main(&self) -> Result<(), String> {
@@ -58,7 +63,8 @@ pub fn window_event<R: Runtime>(window: &Window<R>, event: &WindowEvent) {
         // would make the user's "Back to OneTHU" action permanently unusable.
         api.prevent_close();
         let app = window.app_handle();
-        if let Err(error) = app.state::<Lifecycle>().close_main(&Windows(app)) {
+        let mode = crate::desktop_keepalive::mode();
+        if let Err(error) = app.state::<Lifecycle>().close_main(&Windows(app), mode) {
             crate::debug_log_line(&format!("[LIFECYCLE] {error}"));
         }
     }
@@ -80,5 +86,6 @@ pub fn request_activate_main<R: Runtime>(app: &AppHandle<R>) {
 }
 
 pub fn overlay_hidden<R: Runtime>(app: &AppHandle<R>) {
-    app.state::<Lifecycle>().overlay_hidden(&Windows(app));
+    let mode = crate::desktop_keepalive::mode();
+    app.state::<Lifecycle>().overlay_hidden(&Windows(app), mode);
 }
