@@ -197,11 +197,12 @@ assert.ok(
   /make-release-manifest\.mjs/.test(wf),
   "publish job 没有用 make-release-manifest.mjs 生成 latest.json",
 );
-/* 认真正的回读命令：注释里提到那个地址不算 */
+/* 认真正的回读命令：注释里提到那个地址不算。地址先赋给 url=，再由 curl 取（带重试） */
 assert.ok(
-  /curl -fsSL "https:\/\/github\.com\/\$GITHUB_REPOSITORY\/releases\/latest\/download\/latest\.json"/.test(wf),
+  /url="https:\/\/github\.com\/\$GITHUB_REPOSITORY\/releases\/latest\/download\/latest\.json"/.test(wf),
   "publish job 没有回读客户端真正读取的 latest.json 地址：清单坏了要在这里失败",
 );
+assert.ok(/curl -fsSL "\$url"/.test(wf), "publish job 声明了清单地址却没有真的去取它");
 
 console.log(
   `分叉构建：release.yml 仅手动触发（含 fork/android 输入）✓ / 标识 ${fork.identifier} 与正式版分离 ✓ / ` +

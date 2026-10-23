@@ -354,8 +354,16 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          # 客户端读的就是 releases/latest/download/latest.json：能在这一步失败，比等用户发现好
-          curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/latest.json" -o /tmp/latest.json
+          # 客户端读的就是 releases/latest/download/latest.json：能在这一步失败，比等用户发现好。
+          # 刚建完 Release 时 latest 可能还指向上一个版本，所以重试几次再判失败。
+          url="https://github.com/$GITHUB_REPOSITORY/releases/latest/download/latest.json"
+          for attempt in 1 2 3 4 5; do
+            if curl -fsSL "$url" -o /tmp/latest.json && grep -q "\"$VERSION\"" /tmp/latest.json; then
+              break
+            fi
+            echo "· 第 $attempt 次未取到 $VERSION 的清单，5 秒后重试"
+            sleep 5
+          done
           node -e '
             const m = JSON.parse(require("node:fs").readFileSync("/tmp/latest.json", "utf8"));
             const keys = ["windows", "macos", "android"];
