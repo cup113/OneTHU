@@ -20,6 +20,16 @@ mod harness_embed;
 mod overlay_win;
 #[cfg(desktop)]
 mod desktop_lifecycle;
+/// 后台常驻档位（悬浮球保活 / 托盘保活二选一）：桌面端有真实现，移动端是如实拒绝的替身。
+/// 两条命令在下面的 `invoke_handler!` 里无条件注册，两端必须同名（见替身文件头注）。
+#[cfg(desktop)]
+mod desktop_keepalive;
+#[cfg(not(desktop))]
+#[path = "desktop_keepalive_mobile.rs"]
+mod desktop_keepalive;
+/// 系统托盘图标（Windows 通知区域 / macOS 菜单栏）。仅桌面端。
+#[cfg(desktop)]
+mod tray;
 mod updater;
 mod ws_bridge;
 mod plugins;
@@ -4480,6 +4490,10 @@ let builder = tauri::Builder::default();
         })
         .setup(|app| {
             privacy_consent::init(app.handle());
+            // 后台常驻档位：必须在任何可能关窗的路径之前读进来（托盘档要在这里把图标建好，
+            // 否则用户在 setup 完成前关窗会被判成「无载体」而退出）。
+            #[cfg(desktop)]
+            desktop_keepalive::init(app.handle());
             let _ = LOG_APP.set(app.handle().clone());
             // R21 网络诊断：解析结果落日志（v4/v6 混合与否是「校内每请求 5s」的
             // 关键证据——IPv6 先超时再回落 v4 的连接 stall 每条新连接付一次）
@@ -4545,6 +4559,7 @@ let builder = tauri::Builder::default();
         })
         .invoke_handler(tauri::generate_handler![
             privacy_consent::privacy_consent_read, privacy_consent::privacy_consent_write,
+            desktop_keepalive::desktop_keepalive_read, desktop_keepalive::desktop_keepalive_write,
             skills::skills_action, skills::skills_export,
             douyu_bridge::douyu_send_danmu,
             douyu_bridge::douyu_self_check,

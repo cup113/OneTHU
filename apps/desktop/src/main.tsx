@@ -37,9 +37,13 @@ installScrollReveal();
 installTextContrast();
 // 按钮涟漪（§3.5 B1）：全局单监听，认类名不认调用点；触摸/笔出涟漪，鼠标只走状态层（§2.8.3）
 installRipple();
-/* 悬浮球默认开：原生端不会自己 show，启动时按偏好真正显示一次（用户「本次关闭」则跳过） */
-import { syncOverlayPreference } from "./lib/overlay.js";
-void syncOverlayPreference();
+/* 后台常驻（需求 2026-10-23）：桌面端二选一——悬浮球保活（默认，与以前一致）或托盘保活。
+   托盘档下启动不创建悬浮球（原生 overlay_show 也会拒）；读不到档位时按悬浮球档走。 */
+import { syncDesktopKeepAlive } from "./lib/desktopKeepAlive.js";
+void syncDesktopKeepAlive();
+/* 托盘菜单动作（主窗口唤回已在原生侧完成；这里只负责落到「后台常驻」分节）+ 语言推送 */
+import { installTrayActions } from "./state/trayActions.js";
+installTrayActions();
 
 import { createRoot } from "react-dom/client";
 import { lazy, Suspense } from "react";

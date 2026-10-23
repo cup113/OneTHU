@@ -14,6 +14,8 @@ import { Btn, SettingsList, SettingsRow, Switch } from "@onethu/gui";
 import { isOverlayClosedByUser, overlayHide, setOverlayClosedByUser, overlayShow, overlaySupported, syncOverlayPreference } from "../lib/overlay.js";
 import { hasOverlayPermission, requestOverlayPermission } from "../lib/overlayAndroid.js";
 import { isAndroidNavigator } from "../lib/androidHost.js";
+import { readKeepAlive, writeKeepAlive } from "../lib/desktopKeepAlive.js";
+import type { KeepAliveMode } from "../lib/keepAliveMode.js";
 import { goOhRow } from "./OhSettingsPage.js";
 
 
@@ -41,9 +43,13 @@ export function OverlaySettingsSection(): ReactNode {
   const [perm, setPerm] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   void busy; // 开关本身不做禁用态（并发点击由 toggle 内的 await 自然串行）
+  /* 后台常驻档位（桌面端二选一）。托盘保活档下悬浮球整个不参与：这里只给一条说明与
+     「改用悬浮球保活」，不给一个点了也不会有球的开关。安卓/浏览器读到 null → 行为不变。 */
+  const [keepalive, setKeepalive] = useState<KeepAliveMode | null>(null);
 
   useEffect(() => {
     void (async () => {
+      setKeepalive((await readKeepAlive())?.mode ?? null);
       const sup = await overlaySupported();
       setSupported(sup);
       setPerm(await hasOverlayPermission().catch(() => null));
@@ -82,6 +88,39 @@ export function OverlaySettingsSection(): ReactNode {
         <SettingsRow
           title={i18n("components.overlaysettingssection.53c53ec1d550")}
           sub={i18n("components.overlaysettingssection.8eed0df5580d")}
+        />
+      </SettingsList>
+    );
+  }
+
+  /* 托盘保活档：球不参与后台常驻。这里不显示开关，只给回切入口（用户可能就想找回球）。 */
+  if (keepalive === "tray") {
+    return (
+      <SettingsList>
+        <SettingsRow
+          id="row-overlay-tray-mode"
+          title={i18n("components.keepalivesettingssection.669e934e4e26")}
+          control={
+            <Btn
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                void (async () => {
+                  try {
+                    await writeKeepAlive("overlay");
+                    setKeepalive("overlay");
+                    setOverlayClosedByUser(false);
+                    await overlayShow();
+                    setOpen(true);
+                  } catch {
+                    /* 原生拒绝（托盘档没落盘）：下次进设置页会重新读真实档位，别在这里猜 */
+                  }
+                })();
+              }}
+            >
+              {i18n("components.keepalivesettingssection.7a535c93b575")}
+            </Btn>
+          }
         />
       </SettingsList>
     );

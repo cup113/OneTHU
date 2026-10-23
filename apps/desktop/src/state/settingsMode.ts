@@ -48,6 +48,7 @@ const SETTINGS_LABEL_KEYS: Readonly<Record<string, string>> = {
   "主题": "settings.label.theme",
   "外观": "settings.label.visual",
   "工作空间": "settings.label.workspace",
+  "后台常驻": "components.keepalivesettingssection.8cf5d78e86d6",
   "极客模式": "settings.label.geek",
   "首页布局": "settings.label.home",
   "收藏夹": "settings.label.favorites",

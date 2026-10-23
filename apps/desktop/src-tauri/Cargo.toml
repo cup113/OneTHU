@@ -22,7 +22,11 @@ jni = "0.21"
 encoding_rs = "0.8"
 # protocol-asset：壁纸存档（local:<路径>）经 convertFileSrc 走 asset:// 通道渲染 —— 缺它
 # 视频/图片一片空白（2026-10-15 用户实测：dataURL 时代还能播，落盘后反而不能播）
-tauri = { version = "2", features = ["devtools", "macos-private-api", "protocol-asset"] }
+# tray-icon：后台常驻「托盘保活」档（src/tray.rs）。该 feature 在 tauri 里按桌面平台门控，
+# 安卓/iOS 构建不受影响（见 tauri 的 target 依赖段）。
+# 不启用 tauri 的 image-png：那会把 image 0.25 整包拉进依赖树；macOS 菜单栏模板图改用
+# 依赖树里已经在的 png 0.17 解码（见下面的 macOS 目标依赖），Windows 直接用应用自身图标。
+tauri = { version = "2", features = ["devtools", "macos-private-api", "protocol-asset", "tray-icon"] }
 # 外链走系统浏览器：webview 内 window.open/<a target=_blank> 均无效
 tauri-plugin-opener = "2"
 tauri-plugin-onethu-calendar = { path = "plugins/onethu-calendar" }
@@ -76,6 +80,9 @@ futures-util = "0.3"   # ws_bridge.rs 全平台 import（Android 交叉编译需
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"
+# 托盘模板图（icons/tray-template.png）的解码器：0.17 已经在依赖树里（tao/tauri 的间接依赖），
+# 直接引用不新增下载与编译单元。
+png = "0.17"
 objc2 = { version = "0.6", features = ["alloc", "std"] }
 objc2-foundation = { version = "0.3", default-features = false, features = [
   "std", "NSString", "NSArray", "NSError", "NSObject", "NSBundle",
