@@ -44,6 +44,12 @@ jobs:
     # 标签用 [self-hosted, Windows]（GitHub 给自建 runner 的默认标签）。
     runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.runner == 'self-hosted')
       && fromJSON('["self-hosted","Windows"]') || matrix.os }}
+    # 默认 shell 在 Windows runner 上是 pwsh：多行 run 里前面的命令失败不会中断，
+    # step 的退出码只看最后一条命令。实测 run 39979127330：鉴权守卫在 Windows 上
+    # 同样断言失败，step 却是绿的，只有 macOS（bash）报红。统一走 bash，三端一致。
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
@@ -89,13 +95,9 @@ jobs:
       - name: Check cloud account boundaries
         run: node tools/seafile-account-lifecycle-test.mjs
       - name: Check authentication recovery and account ownership
-        run: |
-          node --import tsx tools/login-public-key-test.mjs
-          node --import tsx tools/cas-recovery-trust-test.mjs
-          node tools/login-attempt-state-test.mjs
-          node --import tsx tools/auth-cookie-boundary-test.mjs
-          node tools/session-probe-policy-test.mjs
-          node tools/native-session-epoch-test.mjs
+        # 走 package.json 的 test:login 而不是在这里铺多行命令：一条命令只有一退出码，
+        # 各平台语义一致，本地也能用同一条脚本复现（`pnpm run test:login`）。
+        run: pnpm run test:login
       - name: Check profile merge boundaries
         run: node --import ./tools/ts-resolve-register.mjs tools/profile-sync-test.mjs
       - name: Check secondary timetable and calendar integrity

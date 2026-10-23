@@ -77,6 +77,17 @@ for (const secret of ["ANDROID_KEYSTORE_BASE64", "ANDROID_KS_PASS", "ANDROID_KEY
   assert.ok(wf.includes(`secrets.${secret}`), `release.yml 没有引用 secret ${secret}`);
 }
 assert.ok(/if-no-files-found: error/.test(wf), "APK 上传没设 if-no-files-found: error：构建空转也能绿灯");
+/* Windows runner 的默认 shell 是 pwsh：多行 run 只由最后一条命令决定退出码，前面的失败会被
+ * 吞掉（实测 run 39979127330：鉴权守卫在 Windows 上同样断言失败，step 却是绿的，只有
+ * macOS 的 bash 报红）。desktop job 统一 shell，多步守卫收成一条脚本。 */
+assert.ok(
+  /defaults:\s*\n\s+run:\s*\n\s+shell: bash/.test(wf),
+  "desktop job 没有统一 shell: bash：Windows 上多行 run 的失败会被吞掉",
+);
+assert.ok(
+  /run: pnpm run test:login/.test(wf),
+  "鉴权守卫必须收成一条脚本：多行 run 在 pwsh 与 bash 下的退出码语义不一致",
+);
 /* setup-android 的默认 packages 含 `tools`，该包已从 SDK 仓库移除，会让 job 在第一步就失败 */
 assert.ok(
   /setup-android@v3[^]*?packages:\s*""/.test(wf),
