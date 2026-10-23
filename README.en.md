@@ -81,7 +81,7 @@ pnpm install
 pnpm dev
 ```
 
-A browser preview is not the native host. Native builds need Rust and Tauri platform dependencies; Android additionally needs a JDK, SDK and NDK. The active development branch is dev3.
+A browser preview is not the native host: `pnpm dev` starts vite only, and the desktop app runs with `pnpm dev:app`. Native builds need Rust and Tauri platform dependencies; Android additionally needs a JDK, SDK and NDK. The active development branch is dev3.
 
 - [Developer center and builds](docs/en/developers.md)
 - [OneTHU CLI, SDK and resident assistant](docs/en/onethu-cli.md): independent sign-in, course archives, scheduled checks and IM notifications, with MCP access for other agents. These are current source-development capabilities; see the guide for installation and validation limits.

@@ -27,6 +27,8 @@ import { ExtHwSettingsSection } from "../components/ExtHwSettingsSection.js";
 import { TabManageModal } from "../components/TabManageModal.js";
 import { NotifySettingsSection } from "../components/NotifySettingsSection.js";
 import { WidgetSettingsSection } from "../components/WidgetSettingsSection.js";
+import { KeepAliveSettingsSection } from "../components/KeepAliveSettingsSection.js";
+import { desktopKeepAliveSupported } from "../lib/desktopKeepAlive.js";
 import { OneShotSettings } from "../components/explorer/OneShot.js";
 import { NameCardSection } from "../components/NameCardSection.js";
 import { invoke } from "@tauri-apps/api/core";
@@ -386,6 +388,13 @@ export function SettingsPage() {
       <ExplorerPrefsSection />
 
       </SettingsGroup>
+      {/* 后台常驻：桌面端才有「悬浮球 / 托盘」二选一（安卓的后台常驻仍是 OH 设置里的悬浮球开关） */}
+      {desktopKeepAliveSupported() ? (
+        <SettingsGroup tab="外观与布局" active={tab} section="后台常驻">
+        <SectionHead id="row-set-keepalive" title={i18n("components.keepalivesettingssection.8cf5d78e86d6")} />
+        <KeepAliveSettingsSection />
+        </SettingsGroup>
+      ) : null}
       <SettingsGroup tab="功能" active={tab} section="收藏夹">
       <SectionHead id="row-set-favs" title={i18n("pages.settings.796d20e91588")} />
       <SettingsList>

@@ -627,6 +627,16 @@ async fn ensure_window(app: &AppHandle) -> Result<WebviewWindow, String> {
 
 // ── 命令 ────────────────────────────────────────────────────────────────────
 
+/// 「后台常驻」是否允许桌面悬浮球出场。
+///
+/// 2026-10-23（后台常驻二选一）：托盘档下悬浮球整个不参与——设置页不会显示球开关，前端启动
+/// 也不会调 `overlay_show`；这里再拦一道，旧前端、插件、残留调用都带不回球来。判据是档位，
+/// 不是「托盘图标在不在」：托盘建失败时仍是托盘档，此时冒出球会让人以为档位没生效。
+#[cfg(desktop)]
+fn orb_allowed() -> bool {
+    crate::desktop_keepalive::mode() != crate::desktop_lifecycle::KeepAlive::Tray
+}
+
 /// 该平台是否支持系统级悬浮球（桌面 = true；Android/iOS = false，安卓走 onethu-overlay 插件）
 #[tauri::command]
 pub fn overlay_supported() -> bool {
@@ -638,6 +648,10 @@ pub fn overlay_supported() -> bool {
 pub async fn overlay_show(app: AppHandle) -> Result<(), String> {
     #[cfg(desktop)]
     {
+        if !orb_allowed() {
+            log("托盘保活档：不创建悬浮球（overlay_show 已忽略）");
+            return Ok(());
+        }
         let win = ensure_window(&app).await?;
         let reload = {
             let mut s = st();
@@ -745,6 +759,10 @@ pub async fn overlay_set_mode(app: AppHandle, mode: String) -> Result<(), String
         let m = Mode::parse(&mode)?;
         if m == Mode::Hidden {
             return overlay_hide(app);
+        }
+        if !orb_allowed() {
+            log(&format!("托盘保活档：忽略切形态 {mode}（不创建悬浮球）"));
+            return Ok(());
         }
         let win = ensure_window(&app).await?;
         let ball = { st().ball }.or_else(|| load_pos(&app));
