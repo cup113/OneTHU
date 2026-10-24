@@ -196,6 +196,13 @@ assert.ok(/ONETHU_FORK_VERSION: \$\{\{ inputs\.version \}\}/.test(wf), "构建�
 /* 发版要三端齐全：输入组合在开始就校验，别等三个 job 跑完才失败 */
 assert.ok(/Validate inputs/.test(wf), "release.yml 缺少输入校验步骤");
 assert.ok(/if \[ "\$RELEASE" = "true" \][^]*?exit 1/.test(wf), "输入校验没有对 release 的组合做拦截");
+/* tag 查重不能用 `git ls-remote`：guard job 没有 checkout，没有 origin 远端，命令会以 128
+ * 失败、`if` 判假就静默放下（实测 run 40054912059 一路走到 publish 才报 tag 已存在）。 */
+assert.ok(
+  /gh api "repos\/\$GITHUB_REPOSITORY\/git\/ref\/tags\/fork-\$VERSION"/.test(wf),
+  "tag 查重必须走 gh api（guard job 没有 checkout，git ls-remote 必然静默失败）",
+);
+assert.ok(/tag 查重失败/.test(wf), "tag 查重失败时不能当成「没有这个 tag」继续发布");
 /* 发布 job */
 assert.ok(/\n  publish:/.test(wf), "release.yml 缺少 publish job：release 输入无实际动作");
 assert.ok(

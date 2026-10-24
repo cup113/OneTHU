@@ -48,6 +48,7 @@ jobs:
     steps:
       - name: Validate inputs
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE: ${{ inputs.release }}
           FORK: ${{ inputs.fork }}
           ANDROID: ${{ inputs.android }}
@@ -67,10 +68,22 @@ jobs:
             # 三端齐全才谈发布：只跑 Windows、或只跑自建 Windows 机，都凑不出 macOS 产物
             [ "$ONLY_WINDOWS" != "true" ] || { echo "::error::release 不能勾 only_windows（缺 macOS 产物，清单会拒绝生成）"; exit 1; }
             [ "$RUNNER" != "self-hosted" ] || { echo "::error::release 需要 github-hosted runner（自建机只有 Windows，凑不出三端）"; exit 1; }
-            if git ls-remote --tags --exit-code origin "refs/tags/fork-$VERSION" >/dev/null 2>&1; then
-              echo "::error::tag fork-$VERSION 已存在：改版本号，或先删掉旧 Release（覆盖会让已下载的客户端清单与产物不一致）"
+            # tag 查重走 gh api：guard job 没有 checkout，没有 origin 远端，
+            # `git ls-remote` 只会以 128 失败，`if` 判假就静默放过了（实测 run 40054912059 就是
+            # 这样放过去、到 publish 才报「tag 已存在」）。这里只有 404 才算「不存在」，
+            # 其它任何失败都必须让 guard 红，不允许把「查不了」当成「没有」。
+            set +e
+            existing="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/fork-$VERSION" --jq .ref 2>&1)"
+            queried=$?
+            set -e
+            if [ "$queried" -eq 0 ]; then
+              echo "::error::tag ${existing:-fork-$VERSION} 已存在：改版本号，或先删掉旧 Release（覆盖会让已下载的客户端清单与产物不一致）"
               exit 1
             fi
+            case "$existing" in
+              *"Not Found"*|*404*) : ;;
+              *) echo "::error::tag 查重失败，不能据此发布：$existing"; exit 1 ;;
+            esac
           fi
           echo "· 输入校验通过（fork=$FORK android=$ANDROID release=$RELEASE version=${VERSION:-<配置里的版本>}）"
 
