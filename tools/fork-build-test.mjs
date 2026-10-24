@@ -203,6 +203,12 @@ assert.ok(
   "tag 查重必须走 gh api（guard job 没有 checkout，git ls-remote 必然静默失败）",
 );
 assert.ok(/tag 查重失败/.test(wf), "tag 查重失败时不能当成「没有这个 tag」继续发布");
+/* 分叉仓库的 GITHUB_TOKEN 只读（fork 无法提权）：建 Release 必须走 PAT，且写权限要提前验 */
+assert.ok(
+  /secrets\.RELEASE_TOKEN \|\| secrets\.GITHUB_TOKEN/.test(wf),
+  "publish 没有用 RELEASE_TOKEN 回落：分叉仓库的 GITHUB_TOKEN 只读，建 Release 会 403",
+);
+assert.ok(/permissions\.push/.test(wf), "guard 没有校验 token 的写权限：会等三端编完才在 publish 报 403");
 /* 发布 job */
 assert.ok(/\n  publish:/.test(wf), "release.yml 缺少 publish job：release 输入无实际动作");
 assert.ok(

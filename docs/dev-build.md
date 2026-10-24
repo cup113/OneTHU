@@ -177,6 +177,19 @@ grep -rl "onethu.dev.badge.hidden" apps/desktop/dist/assets || echo "正式版�
 `version` 留空则沿用 `tauri.fork.conf.json` 里的值；只验证构建链时不要勾 `release`，
 否则会真的建出一个 Release（tag 已存在时 `guard` 会先拦下，避免覆盖已发布的内容）。
 
+**发 Release 需要一个 PAT。** 本仓是 fork，GitHub 给 `GITHUB_TOKEN` 的权限是只读
+（`actions/permissions/workflow` 的默认值是 `read`，fork 无法在 workflow 里自行提权），
+所以 `gh release create` 会报 `HTTP 403: Resource not accessible by integration`。先把一个
+带 `contents: write` 的 token 存成 secret：
+
+```bash
+gh secret set RELEASE_TOKEN --repo cup113/OneTHU   # 粘 PAT（fine-grained 只勾 Contents: Read and write）
+```
+
+workflow 里三处 `GH_TOKEN` 都是 `secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN` 回落；
+没配 PAT 时 `guard` 会在开始就用 `repos/<repo>` 的 `.permissions.push` 拦下，不会等三端
+编完才在 `publish` 报 403。
+
 ## 8. Android 发布签名凭据
 
 `build-release-apk.sh` 的签名读 4 个环境变量：`ONETHU_KEYSTORE`、`ONETHU_KS_PASS`、

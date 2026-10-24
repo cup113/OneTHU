@@ -48,7 +48,8 @@ jobs:
     steps:
       - name: Validate inputs
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 分叉仓库的 GITHUB_TOKEN 只读：配了 PAT 就用它，否则回落到只读 token（写权限校验会当场拦下）
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           RELEASE: ${{ inputs.release }}
           FORK: ${{ inputs.fork }}
           ANDROID: ${{ inputs.android }}
@@ -84,6 +85,14 @@ jobs:
               *"Not Found"*|*404*) : ;;
               *) echo "::error::tag 查重失败，不能据此发布：$existing"; exit 1 ;;
             esac
+            # 分叉仓库的 GITHUB_TOKEN 是只读的（fork 无法自行提权，job 级 permissions 也救不了），
+            # 建 Release 必须有 secrets.RELEASE_TOKEN（PAT，contents: write）。这里先验一次写权限，
+            # 别等三个平台编完才在 publish 报 403（实测 run 40054912059 第二次重跑）。
+            push="$(gh api "repos/$GITHUB_REPOSITORY" --jq '.permissions.push' 2>&1)"
+            [ "$push" = "true" ] || {
+              echo "::error::当前 token 不能写 Releases（.permissions.push=$push）：分叉仓库的 GITHUB_TOKEN 只读，请配置 secrets.RELEASE_TOKEN（PAT，勾 contents: write）"
+              exit 1
+            }
           fi
           echo "· 输入校验通过（fork=$FORK android=$ANDROID release=$RELEASE version=${VERSION:-<配置里的版本>}）"
 
@@ -350,7 +359,8 @@ jobs:
           } > release-out/NOTES.md
       - name: Publish release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 分叉仓库的 GITHUB_TOKEN 只读，建 Release 用 PAT（见 guard 的写权限校验）
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
@@ -366,7 +376,8 @@ jobs:
             "${FILES[@]}" release-out/latest.json
       - name: Verify manifest resolves
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 分叉仓库的 GITHUB_TOKEN 只读，建 Release 用 PAT（见 guard 的写权限校验）
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
