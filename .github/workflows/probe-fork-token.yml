@@ -34,6 +34,27 @@ jobs:
             echo "VERDICT[write]: 未生效 —— $out"
           fi
 
+  probe-b-with-cli:
+    # 第三个对照：与 publish 同一路径（gh release create --draft），而不是裸 gh api
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe gh release create --draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          tag="probe-cli-${{ github.run_id }}"
+          if out="$(gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "probe $tag" --notes "probe" --draft 2>&1)"; then
+            echo "VERDICT[cli]: 生效 —— $out"
+            gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes >/dev/null 2>&1 || true
+          else
+            echo "VERDICT[cli]: 未生效 —— $out"
+          fi
+
   without-write:
     # 对照组：不声明 permissions，看默认权限下同样的 POST 是什么结果
     runs-on: ubuntu-latest
