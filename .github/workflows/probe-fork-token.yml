@@ -55,6 +55,35 @@ jobs:
             echo "VERDICT[cli]: 未生效 —— $out"
           fi
 
+  rerun-semantics:
+    # 第四次对照：`gh run rerun --failed` 之后，job 级写权限还在不在。
+    # attempt 1 故意失败；重跑时 run_attempt=2，再做一次 draft release 的 POST。
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe write permission across a re-run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          echo "run_attempt=${{ github.run_attempt }}"
+          echo "job 声明：permissions: contents: write"
+          echo "token 看到的 .permissions：$(gh api "repos/$GITHUB_REPOSITORY" --jq '.permissions' 2>&1)"
+          if [ "${{ github.run_attempt }}" = "1" ]; then
+            echo "attempt 1：故意失败，供重跑对照"
+            exit 1
+          fi
+          tag="probe-rerun-${{ github.run_id }}"
+          if out="$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$tag" -f target_commitish="$GITHUB_SHA" -F draft=true --jq .id 2>&1)"; then
+            echo "VERDICT[rerun]: 生效 —— 重跑后仍可写（id=$out）"
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$out" >/dev/null 2>&1 || true
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag" >/dev/null 2>&1 || true
+          else
+            echo "VERDICT[rerun]: 未生效 —— $out"
+          fi
+
   without-write:
     # 对照组：不声明 permissions，看默认权限下同样的 POST 是什么结果
     runs-on: ubuntu-latest
