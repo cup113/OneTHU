@@ -85,14 +85,19 @@ jobs:
               *"Not Found"*|*404*) : ;;
               *) echo "::error::tag 查重失败，不能据此发布：$existing"; exit 1 ;;
             esac
-            # 分叉仓库的 GITHUB_TOKEN 是只读的（fork 无法自行提权，job 级 permissions 也救不了），
-            # 建 Release 必须有 secrets.RELEASE_TOKEN（PAT，contents: write）。这里先验一次写权限，
-            # 别等三个平台编完才在 publish 报 403（实测 run 40054912059 第二次重跑）。
-            push="$(gh api "repos/$GITHUB_REPOSITORY" --jq '.permissions.push' 2>&1)"
-            [ "$push" = "true" ] || {
-              echo "::error::当前 token 不能写 Releases（.permissions.push=$push）：分叉仓库的 GITHUB_TOKEN 只读，请配置 secrets.RELEASE_TOKEN（PAT，勾 contents: write）"
+            # 写权限自检：`.permissions.push` 不可用（探针实测：能建 Release 的 token 上它也是
+            # false），只能真做一次动作。建一个 draft 再立刻删：draft 不进 Releases 列表，
+            # 也不影响 `releases/latest`。失败就当场红，别等三端编完才在 publish 报 403。
+            probe_tag="probe-perm-${GITHUB_RUN_ID}"
+            if probe_id="$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" \
+                -f tag_name="$probe_tag" -f target_commitish="$GITHUB_SHA" -F draft=true --jq .id 2>&1)"; then
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$probe_id" >/dev/null 2>&1 || true
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$probe_tag" >/dev/null 2>&1 || true
+              echo "· 写权限自检通过（draft release 建删各一次，tag=$probe_tag）"
+            else
+              echo "::error::当前 token 建不了 Release：$probe_id（检查仓库 Workflow permissions，或配置 secrets.RELEASE_TOKEN）"
               exit 1
-            }
+            fi
           fi
           echo "· 输入校验通过（fork=$FORK android=$ANDROID release=$RELEASE version=${VERSION:-<配置里的版本>}）"
 

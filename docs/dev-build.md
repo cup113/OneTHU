@@ -177,18 +177,28 @@ grep -rl "onethu.dev.badge.hidden" apps/desktop/dist/assets || echo "正式版�
 `version` 留空则沿用 `tauri.fork.conf.json` 里的值；只验证构建链时不要勾 `release`，
 否则会真的建出一个 Release（tag 已存在时 `guard` 会先拦下，避免覆盖已发布的内容）。
 
-**发 Release 需要一个 PAT。** 本仓是 fork，GitHub 给 `GITHUB_TOKEN` 的权限是只读
-（`actions/permissions/workflow` 的默认值是 `read`，fork 无法在 workflow 里自行提权），
-所以 `gh release create` 会报 `HTTP 403: Resource not accessible by integration`。先把一个
-带 `contents: write` 的 token 存成 secret：
+**写权限：job 级 `permissions: contents: write` 在 fork 里有效。** 这一点被探针实测过
+（`probe-fork-token.yml`，四个对照）：声明了写权限的 job 能建 draft release，不声明的报
+`403 Resource not accessible by integration`；`gh api` 与 `gh release create` 两条路径都行，
+`rerun --failed` 之后也仍然可写。
+
+两个**不能**用作判据的东西：
+
+- 仓库设置 `actions/permissions/workflow` 的默认值（`read`）只决定「没声明时」的权限；
+- `GET /repos/<repo>` 的 `.permissions.push` 反映的是调用者的角色，**能建 Release 的 token
+  上它也是 false**（探针实测），拿它当写权限预检会误拦正确发布。
+
+因此 `guard` 的写权限自检是「真建一个 draft release 再删掉」（draft 不进 Releases 列表、
+不影响 `releases/latest`）。`GH_TOKEN` 仍是 `secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN`
+回落：正常情况下不需要 PAT，只在 `GITHUB_TOKEN` 真的写不了时作为补救：
 
 ```bash
-gh secret set RELEASE_TOKEN --repo cup113/OneTHU   # 粘 PAT（fine-grained 只勾 Contents: Read and write）
+gh secret set RELEASE_TOKEN --repo cup113/OneTHU   # 可选：fine-grained PAT，只勾 Contents: Read and write
 ```
 
-workflow 里三处 `GH_TOKEN` 都是 `secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN` 回落；
-没配 PAT 时 `guard` 会在开始就用 `repos/<repo>` 的 `.permissions.push` 拦下，不会等三端
-编完才在 `publish` 报 403。
+留一条**未解释**的记录：run 40054912059 的 `publish` 重跑曾报 403，而当时该 job 已声明
+`contents: write`，之后用同样的声明重跑探针却成功。原因至今未查明；若再次出现，先看
+`guard` 的写权限自检是否通过——通过了就说明问题不在权限，而在别处。
 
 ## 8. Android 发布签名凭据
 

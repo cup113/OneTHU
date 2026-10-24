@@ -203,12 +203,28 @@ assert.ok(
   "tag 查重必须走 gh api（guard job 没有 checkout，git ls-remote 必然静默失败）",
 );
 assert.ok(/tag 查重失败/.test(wf), "tag 查重失败时不能当成「没有这个 tag」继续发布");
-/* 分叉仓库的 GITHUB_TOKEN 只读（fork 无法提权）：建 Release 必须走 PAT，且写权限要提前验 */
+/* 分叉仓库的 GITHUB_TOKEN 到底能不能写 Releases：实测**能**（job 级 contents: write 生效，
+ * 重跑（rerun --failed）之后也生效，draft 建删两次都成功）。所以不许用 `.permissions.push`
+ * 预检——探针显示能建 Release 的 token 上它也是 false，那会误拦正确发布。写权限只能靠
+ * 「真建一个 draft 再删」来证明。 */
 assert.ok(
   /secrets\.RELEASE_TOKEN \|\| secrets\.GITHUB_TOKEN/.test(wf),
-  "publish 没有用 RELEASE_TOKEN 回落：分叉仓库的 GITHUB_TOKEN 只读，建 Release 会 403",
+  "publish 缺少 RELEASE_TOKEN 回落：保留一条 GITHUB_TOKEN 不可写时的补救路径",
 );
-assert.ok(/permissions\.push/.test(wf), "guard 没有校验 token 的写权限：会等三端编完才在 publish 报 403");
+assert.ok(
+  /-F draft=true --jq \.id/.test(wf),
+  "guard 的写权限自检必须真的建一个 draft（只有这个动作能证明写权限）",
+);
+/* 否定断言只应看代码行：注释里提到某个写法不等于真的用了它（这条断言本身就被自己的注释
+ * 绊过一次）。 */
+const wfCode = wf
+  .split("\n")
+  .filter((line) => !line.trim().startsWith("#"))
+  .join("\n");
+assert.ok(
+  !/permissions\.push/.test(wfCode),
+  "guard 不能用 .permissions.push 判写权限：能建 Release 的 token 上它也是 false",
+);
 /* 发布 job */
 assert.ok(/\n  publish:/.test(wf), "release.yml 缺少 publish job：release 输入无实际动作");
 assert.ok(
