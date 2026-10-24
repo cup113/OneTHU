@@ -1,0 +1,56 @@
+name: probe-fork-token
+# 一次性探针：分叉仓库里 job 级 `permissions: contents: write` 到底能不能提权。
+#
+# 为什么要验：`publish` job 声明了 `contents: write` 仍报
+# `HTTP 403: Resource not accessible by integration`，而本仓 `default_workflow_permissions`
+# 是 read。两种解释都说得出道理——「fork 身份封死」或「job 级权限没生效」——区别在于
+# 以后是否值得继续用 GITHUB_TOKEN。两个 job 只差一行 permissions 声明，直接对照。
+#
+# 探针只建 **draft** release：不进 `releases/latest`，也不出现在 Releases 列表里，
+# 建完立刻删掉。结论写进复盘后即可删除本文件。
+on:
+  workflow_dispatch:
+
+jobs:
+  with-write:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Probe with job-level contents: write"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          echo "job 声明：permissions: contents: write"
+          echo "token 看到的 .permissions：$(gh api "repos/$GITHUB_REPOSITORY" --jq '.permissions' 2>&1)"
+          tag="probe-token-write-${{ github.run_id }}"
+          if out="$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$tag" -f target_commitish="$GITHUB_SHA" -F draft=true --jq .id 2>&1)"; then
+            echo "VERDICT[write]: 生效 —— draft release 已创建（id=$out）"
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$out" >/dev/null 2>&1 || true
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag" >/dev/null 2>&1 || true
+          else
+            echo "VERDICT[write]: 未生效 —— $out"
+          fi
+
+  without-write:
+    # 对照组：不声明 permissions，看默认权限下同样的 POST 是什么结果
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe without any permissions declaration
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          echo "job 未声明 permissions（用仓库默认）"
+          echo "token 看到的 .permissions：$(gh api "repos/$GITHUB_REPOSITORY" --jq '.permissions' 2>&1)"
+          tag="probe-token-default-${{ github.run_id }}"
+          if out="$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$tag" -f target_commitish="$GITHUB_SHA" -F draft=true --jq .id 2>&1)"; then
+            echo "VERDICT[default]: 生效 —— draft release 已创建（id=$out）"
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$out" >/dev/null 2>&1 || true
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag" >/dev/null 2>&1 || true
+          else
+            echo "VERDICT[default]: 未生效 —— $out"
+          fi
