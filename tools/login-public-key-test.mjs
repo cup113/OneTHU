@@ -510,7 +510,10 @@ await check("gateway landing is cleared once and the credential entry retried on
   assert.equal(snaps[0].finalUrl, GATEWAY_FINAL);
 });
 
-await check("a gateway landing without a host hook keeps the original classification", async () => {
+// 上游 0.11.3 把「短页面 + __vpn_hostname_data」判成 gatewayShell，结论是
+// gateway-unavailable。网关仍在线时落到的正是这种壳，所以没有宿主钩子（清不动）时
+// 的兜底结论就是 gateway-unavailable，而不是更笼统的 unexpected-page。
+await check("a gateway landing without a host hook is reported as an unavailable gateway", async () => {
   clearOutstandingLogin();
   const state = { calls: [], entries: 0, posts: 0 };
   let entries = 0;
@@ -518,7 +521,7 @@ await check("a gateway landing without a host hook keeps the original classifica
   state.retry = () => replyAt(KEY, ID_FORM_FINAL);
   state.check = () => replyAt(SUCCESS, ID_CHECK);
   setPlatformFetch(entryGate(state));
-  await assert.rejects(login(h, "123456", "fixture-only"), errorIs("unexpected-page", "credential-entry"));
+  await assert.rejects(login(h, "123456", "fixture-only"), errorIs("gateway-unavailable", "credential-entry"));
   assert.equal(state.entries, 1, "no retry without a host hook");
   assert.equal(state.posts, 0, "a proxied application page never gets credentials");
   assert.equal(entries, 1, "the diagnostic hook still sees the entry");
@@ -532,7 +535,8 @@ await check("a failed gateway reset falls back instead of claiming a pinned sess
   state.retry = () => replyAt(KEY, ID_FORM_FINAL);
   state.check = () => replyAt(SUCCESS, ID_CHECK);
   setPlatformFetch(entryGate(state));
-  await assert.rejects(login(h, "123456", "fixture-only"), errorIs("unexpected-page", "credential-entry"));
+  // 兜底结论跟随上游的 gatewayShell 判定：页面上确实是网关壳，就不是 unexpected-page
+  await assert.rejects(login(h, "123456", "fixture-only"), errorIs("gateway-unavailable", "credential-entry"));
   assert.equal(clears, 1);
   assert.equal(state.entries, 1, "a refused reset must not retry");
 });

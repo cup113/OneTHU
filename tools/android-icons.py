@@ -14,6 +14,7 @@ import zipfile
 
 DENSITIES = {"mdpi": 48, "hdpi": 72, "xhdpi": 96, "xxhdpi": 144, "xxxhdpi": 192}
 ANDROID = "http://schemas.android.com/apk/res/android"
+# aapt2 的输出必须按 UTF-8 解码：Windows 默认走 locale（GBK），会 UnicodeDecodeError。
 
 
 def render(source, target, size):
@@ -70,11 +71,11 @@ def rgba(path):
 
 
 def verify(apk, source, aapt2):
-    resources = subprocess.check_output([str(aapt2), "dump", "resources", str(apk)], text=True)
+    resources = subprocess.check_output([str(aapt2), "dump", "resources", str(apk)], text=True, encoding="utf-8", errors="replace")
     blocks = {}
     for match in re.finditer(r"resource (0x[0-9a-f]+) ([\w/]+)\n(.*?)(?=\n\s*resource |\Z)", resources, re.S):
         blocks[match[2]] = (match[1], match[3])
-    manifest = subprocess.check_output([str(aapt2), "dump", "xmltree", "--file", "AndroidManifest.xml", str(apk)], text=True)
+    manifest = subprocess.check_output([str(aapt2), "dump", "xmltree", "--file", "AndroidManifest.xml", str(apk)], text=True, encoding="utf-8", errors="replace")
     for attribute, name in [("icon", "ic_launcher"), ("roundIcon", "ic_launcher_round")]:
         assert re.search(rf"android:{attribute}\([^)]*\)=@{blocks['mipmap/' + name][0]}\b", manifest), "APK launcher does not reference the verified logo"
     checked = 0
@@ -95,7 +96,7 @@ def verify(apk, source, aapt2):
                 continue
             adaptive = re.search(r"\(anydpi-v26\) \(file\) (\S+\.xml) type=XML", body)
             assert adaptive, f"APK missing adaptive {name}"
-            tree = subprocess.check_output([str(aapt2), "dump", "xmltree", "--file", adaptive[1], str(apk)], text=True)
+            tree = subprocess.check_output([str(aapt2), "dump", "xmltree", "--file", adaptive[1], str(apk)], text=True, encoding="utf-8", errors="replace")
             assert "adaptive-icon" in tree
             assert f"@{blocks['mipmap/ic_launcher_foreground'][0]}" in tree
             assert f"@{blocks['color/onethu_launcher_background'][0]}" in tree
