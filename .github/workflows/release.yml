@@ -215,6 +215,9 @@ jobs:
       # 语法错要在下载 SDK/NDK 之前就炸，别等十分钟
       - name: Check shell syntax
         run: bash -n apps/desktop/scripts/build-fork-apk.sh
+      # 图标由 ffmpeg 按各密度渲染（tools/android-icons.py）：缺了它，包里会退回模板默认图
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - uses: pnpm/action-setup@v4
         with:
           version: 10

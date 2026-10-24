@@ -145,6 +145,20 @@ assert.ok(
   "签名预检没有真的调用 jarsigner（命令行被掏空了）",
 );
 
+/* 图标：`tauri android init` 只给模板默认图，不同步就是安卓默认图标（实测已发布的分叉 APK
+ * 全是默认图）。同步要在 init 之后、构建之前；产物还要做像素级复核。 */
+const idxIconSync = apk.indexOf('android-icons.py" "$GEN"');
+const idxIconVerify = apk.indexOf("--verify-apk");
+assert.ok(idxIconSync > 0, "build-fork-apk.sh 没有在工程生成后同步品牌图标（tools/android-icons.py）");
+assert.ok(idxIconVerify > 0, "build-fork-apk.sh 没有对产物做图标复核（--verify-apk）：默认图标会照发");
+assert.ok(
+  idxInit < idxIconSync && idxIconSync < idxBuild,
+  "图标同步必须夹在 android init 与 android build 之间：早了工程还没生成，晚了图标已经打进包",
+);
+assert.ok(idxIconVerify > idxBuild, "图标复核必须在构建之后（验的是编译进 APK 的像素）");
+assert.ok(/command -v ffmpeg/.test(apk), "build-fork-apk.sh 没有检查 ffmpeg：缺它时图标同步会以 traceback 收场");
+assert.ok(/install -y -qq ffmpeg/.test(wf), "android job 没有安装 ffmpeg：图标同步会直接失败");
+
 const signingPy = read("tools/android-signing.py");
 const idxDefReuse = signingPy.indexOf("def reuse_existing(");
 const idxDefInstall = signingPy.indexOf("def install(");
