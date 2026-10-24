@@ -31,9 +31,78 @@ on:
         description: "同时构建 Android 分叉包（包名 app.onethu.desktop.fork，签名读 ANDROID_* secret）"
         type: boolean
         default: false
+      version:
+        description: "分叉版本覆盖（形如 0.11.3-2，留空用 tauri.fork.conf.json）。带 release 时必填"
+        type: string
+        default: ""
+      release:
+        description: "构建后发布 GitHub Release：tag 为 fork-<version>，附三端产物与 latest.json（需同时勾 fork 与 android）"
+        type: boolean
+        default: false
 
 jobs:
+  guard:
+    # 输入组合在开始时校验：等三个 job 跑完才发现「release 没勾 android」是最贵的失败方式
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate inputs
+        env:
+          # 分叉仓库的 GITHUB_TOKEN 只读：配了 PAT 就用它，否则回落到只读 token（写权限校验会当场拦下）
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          RELEASE: ${{ inputs.release }}
+          FORK: ${{ inputs.fork }}
+          ANDROID: ${{ inputs.android }}
+          ONLY_WINDOWS: ${{ inputs.only_windows }}
+          RUNNER: ${{ inputs.runner }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "$VERSION" ] && ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$'; then
+            echo "::error::version 必须形如 <主>.<次>.<补丁>-<纯数字>（如 0.11.3-2），当前是 $VERSION"
+            exit 1
+          fi
+          if [ "$RELEASE" = "true" ]; then
+            [ "$FORK" = "true" ] || { echo "::error::release 需要同时勾 fork"; exit 1; }
+            [ "$ANDROID" = "true" ] || { echo "::error::release 需要同时勾 android（清单要求三端齐全）"; exit 1; }
+            [ -n "$VERSION" ] || { echo "::error::release 需要显式给 version"; exit 1; }
+            # 三端齐全才谈发布：只跑 Windows、或只跑自建 Windows 机，都凑不出 macOS 产物
+            [ "$ONLY_WINDOWS" != "true" ] || { echo "::error::release 不能勾 only_windows（缺 macOS 产物，清单会拒绝生成）"; exit 1; }
+            [ "$RUNNER" != "self-hosted" ] || { echo "::error::release 需要 github-hosted runner（自建机只有 Windows，凑不出三端）"; exit 1; }
+            # tag 查重走 gh api：guard job 没有 checkout，没有 origin 远端，
+            # `git ls-remote` 只会以 128 失败，`if` 判假就静默放过了（实测 run 40054912059 就是
+            # 这样放过去、到 publish 才报「tag 已存在」）。这里只有 404 才算「不存在」，
+            # 其它任何失败都必须让 guard 红，不允许把「查不了」当成「没有」。
+            set +e
+            existing="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/fork-$VERSION" --jq .ref 2>&1)"
+            queried=$?
+            set -e
+            if [ "$queried" -eq 0 ]; then
+              echo "::error::tag ${existing:-fork-$VERSION} 已存在：改版本号，或先删掉旧 Release（覆盖会让已下载的客户端清单与产物不一致）"
+              exit 1
+            fi
+            case "$existing" in
+              *"Not Found"*|*404*) : ;;
+              *) echo "::error::tag 查重失败，不能据此发布：$existing"; exit 1 ;;
+            esac
+            # 写权限自检：`.permissions.push` 不可用（探针实测：能建 Release 的 token 上它也是
+            # false），只能真做一次动作。建一个 draft 再立刻删：draft 不进 Releases 列表，
+            # 也不影响 `releases/latest`。失败就当场红，别等三端编完才在 publish 报 403。
+            probe_tag="probe-perm-${GITHUB_RUN_ID}"
+            if probe_id="$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" \
+                -f tag_name="$probe_tag" -f target_commitish="$GITHUB_SHA" -F draft=true --jq .id 2>&1)"; then
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$probe_id" >/dev/null 2>&1 || true
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$probe_tag" >/dev/null 2>&1 || true
+              echo "· 写权限自检通过（draft release 建删各一次，tag=$probe_tag）"
+            else
+              echo "::error::当前 token 建不了 Release：$probe_id（检查仓库 Workflow permissions，或配置 secrets.RELEASE_TOKEN）"
+              exit 1
+            fi
+          fi
+          echo "· 输入校验通过（fork=$FORK android=$ANDROID release=$RELEASE version=${VERSION:-<配置里的版本>}）"
+
   desktop:
+    needs: guard
     # 手动触发可只跑 Windows（矩阵动态生成）；不分叉时恒为双平台
     strategy:
       fail-fast: false
@@ -44,6 +113,12 @@ jobs:
     # 标签用 [self-hosted, Windows]（GitHub 给自建 runner 的默认标签）。
     runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.runner == 'self-hosted')
       && fromJSON('["self-hosted","Windows"]') || matrix.os }}
+    # 默认 shell 在 Windows runner 上是 pwsh：多行 run 里前面的命令失败不会中断，
+    # step 的退出码只看最后一条命令。实测 run 39979127330：鉴权守卫在 Windows 上
+    # 同样断言失败，step 却是绿的，只有 macOS（bash）报红。统一走 bash，三端一致。
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
@@ -86,16 +161,14 @@ jobs:
         run: node --import ./tools/ts-resolve-register.mjs tools/desktop-keepalive-test.mjs
       - name: Check fork build isolation
         run: node tools/fork-build-test.mjs
+      - name: Check release manifest
+        run: node tools/release-manifest-test.mjs
       - name: Check cloud account boundaries
         run: node tools/seafile-account-lifecycle-test.mjs
       - name: Check authentication recovery and account ownership
-        run: |
-          node --import tsx tools/login-public-key-test.mjs
-          node --import tsx tools/cas-recovery-trust-test.mjs
-          node tools/login-attempt-state-test.mjs
-          node --import tsx tools/auth-cookie-boundary-test.mjs
-          node tools/session-probe-policy-test.mjs
-          node tools/native-session-epoch-test.mjs
+        # 走 package.json 的 test:login 而不是在这里铺多行命令：一条命令只有一退出码，
+        # 各平台语义一致，本地也能用同一条脚本复现（`pnpm run test:login`）。
+        run: pnpm run test:login
       - name: Check profile merge boundaries
         run: node --import ./tools/ts-resolve-register.mjs tools/profile-sync-test.mjs
       - name: Check secondary timetable and calendar integrity
@@ -114,6 +187,7 @@ jobs:
           node tools/update-reminder-test.mjs
           node --import ./tools/ts-resolve-register.mjs tools/update-language-test.mjs
           node tools/update-check-lifecycle-test.mjs
+          node --import ./tools/ts-resolve-register.mjs tools/update-version-order-test.mjs
           node --import ./tools/ts-resolve-register.mjs tools/news-language-test.mjs
       - name: Check mobile interaction state
         run: |
@@ -135,6 +209,8 @@ jobs:
           SCCACHE_GHA_ENABLED: "true"
           TAURI_SIGNING_PRIVATE_KEY: ""
           TRACE_AMAP_KEY: ${{ secrets.TRACE_AMAP_KEY }}
+          # 版本覆盖（可选）：build-fork.mjs 用它替换分叉配置里的 version，并注入前端
+          ONETHU_FORK_VERSION: ${{ inputs.version }}
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -153,6 +229,7 @@ jobs:
     # 签名材料由 secret 落盘到临时目录；**没配 secret 时只出未签名包**（文件名带
     # -unsigned），用于验证构建链，不会被误当成可发布产物。
     if: github.event_name == 'workflow_dispatch' && inputs.android
+    needs: guard
     runs-on: ubuntu-latest
     env:
       # NDK 只提供 clang/sysroot（rquickjs 的 bindgen 与链接器要用），AGP 不校验具体版本
@@ -165,6 +242,9 @@ jobs:
       # 语法错要在下载 SDK/NDK 之前就炸，别等十分钟
       - name: Check shell syntax
         run: bash -n apps/desktop/scripts/build-fork-apk.sh
+      # 图标由 ffmpeg 按各密度渲染（tools/android-icons.py）：缺了它，包里会退回模板默认图
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - uses: pnpm/action-setup@v4
         with:
           version: 10
@@ -218,6 +298,7 @@ jobs:
       - name: Build fork APK
         env:
           ONETHU_APK_OUT: ${{ runner.temp }}/apk
+          ONETHU_FORK_VERSION: ${{ inputs.version }}
           ONETHU_KS_PASS: ${{ secrets.ANDROID_KS_PASS }}
           ONETHU_KEY_PASS: ${{ secrets.ANDROID_KEY_PASS }}
           ONETHU_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -230,3 +311,97 @@ jobs:
           name: onethu-android-fork
           path: ${{ runner.temp }}/apk/*.apk
           if-no-files-found: error
+
+  publish:
+    # 手动发版：三端产物 + latest.json 一起发。tag 用 `fork-<version>`，**不用 v***（会与上游
+    # 将来的同名 tag 撞车，也会让人误以为是官方发布）。清单的消费方是客户端
+    # `lib/updater.ts`：`releases/latest/download/latest.json`，因此这个 Release 必须是
+    # 最新的正式发布（不能是 draft 或 prerelease）。
+    if: github.event_name == 'workflow_dispatch' && inputs.release
+    needs: [guard, desktop, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: onethu-*-fork
+          path: release-artifacts
+      - name: Build latest.json
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          node apps/desktop/scripts/make-release-manifest.mjs \
+            --dir release-artifacts \
+            --version "$VERSION" \
+            --out release-out/latest.json \
+            --releasedAt "$(date -u +%F)" \
+            --notes "基于上游的分叉构建 $VERSION。后台常驻可选悬浮球或托盘；网关会话仍在线时自动重置并重试一次登录入口。"
+      - name: Write release notes
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          mkdir -p release-out
+          {
+            echo "# OneTHU-Fork $VERSION"
+            echo
+            echo "本仓是 smartThise/OneTHU 的分叉，这是分叉自己的构建，不是官方发布。"
+            echo "打包标识 app.onethu.desktop.fork，可与官方版并存安装；更新源指向本仓库。"
+            echo
+            echo "| 平台 | 文件 |"
+            echo "| --- | --- |"
+            for f in "$(find release-artifacts -name '*-setup.exe' | head -1)" \
+                     "$(find release-artifacts -name '*.dmg' | head -1)" \
+                     "$(find release-artifacts -name '*.apk' | head -1)"; do
+              [ -n "$f" ] && echo "| — | \`$(basename "$f")\` |"
+            done
+            echo
+            echo "\`latest.json\` 是按平台的更新清单（含大小与 SHA-256），客户端下载后流式校验。"
+          } > release-out/NOTES.md
+      - name: Publish release
+        env:
+          # 分叉仓库的 GITHUB_TOKEN 只读，建 Release 用 PAT（见 guard 的写权限校验）
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          # 只发三端安装包与清单；便携 exe（onethu.exe）不进 Release
+          mapfile -t FILES < <(find release-artifacts -type f \
+            \( -name '*.exe' -o -name '*.dmg' -o -name '*.apk' \) | grep -v '/onethu\.exe$')
+          printf '%s\n' "${FILES[@]}"
+          gh release create "fork-$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "OneTHU-Fork $VERSION" \
+            --notes-file release-out/NOTES.md \
+            "${FILES[@]}" release-out/latest.json
+      - name: Verify manifest resolves
+        env:
+          # 分叉仓库的 GITHUB_TOKEN 只读，建 Release 用 PAT（见 guard 的写权限校验）
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          # 客户端读的就是 releases/latest/download/latest.json：能在这一步失败，比等用户发现好。
+          # 刚建完 Release 时 latest 可能还指向上一个版本，所以重试几次再判失败。
+          url="https://github.com/$GITHUB_REPOSITORY/releases/latest/download/latest.json"
+          for attempt in 1 2 3 4 5; do
+            if curl -fsSL "$url" -o /tmp/latest.json && grep -q "\"$VERSION\"" /tmp/latest.json; then
+              break
+            fi
+            echo "· 第 $attempt 次未取到 $VERSION 的清单，5 秒后重试"
+            sleep 5
+          done
+          node -e '
+            const m = JSON.parse(require("node:fs").readFileSync("/tmp/latest.json", "utf8"));
+            const keys = ["windows", "macos", "android"];
+            for (const k of keys) {
+              if (!m.assets?.[k]?.url) { console.error(`✗ 清单缺少 ${k} 资产`); process.exit(1); }
+            }
+            if (m.version !== process.argv[1]) { console.error(`✗ 清单版本 ${m.version} 与输入 ${process.argv[1]} 不一致`); process.exit(1); }
+            console.log(`✓ 清单可解析：${m.version}（${keys.map((k) => m.assets[k].url).join(", ")}）`);
+          ' "$VERSION"
