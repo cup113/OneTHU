@@ -21,9 +21,18 @@ window.addEventListener("unhandledrejection", (e) => {
 });
 // 开发者构建（ONETHU_DEV=1）：把 console.* 也灌进 Rust 日志链，真机导出的日志才有现场。
 // 正式版 __ONETHU_DEV__ 折叠为 false → 整块（含动态 import）被静态删除。
-if (__ONETHU_DEV__) {
-  void import("./lib/devlog.js").then((m) => m.installDevLogBridge());
-}
+/* 取证构建（test/forensic-log）：无条件启用 devlog 桥 + 40 秒心跳打点。
+   崩溃后重开 app 导出日志，最后一条心跳 = 死亡时刻，之前的 console/异常即现场。 */
+void import("./lib/devlog.js").then((m) => m.installDevLogBridge());
+void (async () => {
+  const { logLine } = await import("./lib/clients.js");
+  const t0 = Date.now();
+  for (let i = 1; i <= 20; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    void logLine(`FORENSIC-HEARTBEAT t=${i * 2}s`).catch(() => undefined);
+  }
+  void logLine(`FORENSIC-HEARTBEAT boot+${Math.round((Date.now() - t0) / 1000)}s 窗口结束`).catch(() => undefined);
+})();
 // 真机密度标记：触屏 + 短边窄 → html.is-phone（CSS 密度层挂此类，不依赖媒体查询细节）。
 // 判定在 state/platform.ts 的 isPhoneViewport()（唯一来源，横竖都算手机；dev 可 ?phone=1 强制预览）。
 function markPhone(): void {
