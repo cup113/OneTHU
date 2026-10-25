@@ -31,6 +31,10 @@ on:
         description: "同时构建 Android 分叉包（包名 app.onethu.desktop.fork，签名读 ANDROID_* secret）"
         type: boolean
         default: false
+      ndk:
+        description: "Android NDK 版本覆盖（留空=28.2.13676358；排查闪退可填 27.1.12297006 等旧版）"
+        type: string
+        default: ""
       version:
         description: "分叉版本覆盖（形如 0.11.3-2，留空用 tauri.fork.conf.json）。带 release 时必填"
         type: string
@@ -45,6 +49,12 @@ jobs:
     # 输入组合在开始时校验：等三个 job 跑完才发现「release 没勾 android」是最贵的失败方式
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    # 本 job 的写权限自检要真建一个 draft release 再删掉，所以必须自己声明写权限：
+    # 仓库默认 `actions/permissions/workflow` 是 read，未声明的 job 拿到的是只读 token
+    # （未配 secrets.RELEASE_TOKEN 时 GH_TOKEN 就回落到它）。漏了这一行，自检必然 403，
+    # 于是「不需要 PAT 的正常路径」整条不可用——2026-10-25 发版就是这样在 16 秒内失败的。
+    permissions:
+      contents: write
     steps:
       - name: Validate inputs
         env:
@@ -56,8 +66,13 @@ jobs:
           ONLY_WINDOWS: ${{ inputs.only_windows }}
           RUNNER: ${{ inputs.runner }}
           VERSION: ${{ inputs.version }}
+          NDK: ${{ inputs.ndk }}
         run: |
           set -euo pipefail
+          if [ -n "$NDK" ] && ! printf '%s' "$NDK" | grep -Eq '^[0-9]+(\.[0-9]+){2}$'; then
+            echo "::error::ndk 必须形如 27.1.12297006（纯数字三段），当前是 $NDK"
+            exit 1
+          fi
           if [ -n "$VERSION" ] && ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$'; then
             echo "::error::version 必须形如 <主>.<次>.<补丁>-<纯数字>（如 0.11.3-2），当前是 $VERSION"
             exit 1
@@ -234,7 +249,9 @@ jobs:
     env:
       # NDK 只提供 clang/sysroot（rquickjs 的 bindgen 与链接器要用），AGP 不校验具体版本
       # （生成的工程没有 ndkVersion）。换版本只改这一行，脚本按 NDK_HOME 自行推导工具链路径。
-      NDK_VERSION: "28.2.13676358"
+      # inputs.ndk 可覆盖（排查用）：2026-10-25 排查鸿蒙兼容层闪退，怀疑 r28c 编出的产物在
+      # 该转译层上有兼容性问题——上游 0.11.3 正式包（macOS 本地构建）用的是 27.1.12297006。
+      NDK_VERSION: ${{ inputs.ndk || '28.2.13676358' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -269,6 +286,7 @@ jobs:
           sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "platform-tools" "ndk;$NDK_VERSION"
           ls -1 "$ANDROID_HOME/ndk"
           echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          echo "Android NDK: $NDK_VERSION" >> "$GITHUB_STEP_SUMMARY"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
