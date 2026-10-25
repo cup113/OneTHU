@@ -219,7 +219,10 @@ assert.ok(
  * `contents: write` 的 job 拿到只读 token（未配 RELEASE_TOKEN 时 GH_TOKEN 就回落到它），
  * 于是「不需要 PAT 的正常路径」整条不可用——2026-10-25 发版实录：guard 16 秒报 403，
  * 三端构建全部 skipped。写权限自检能不能过，取决于 guard 自己有没有声明它。 */
-const guardJob = /^ {2}guard:\n([\s\S]*?)(?=^ {2}\S)/m.exec(wf)?.[1] ?? "";
+const guardJob = /^ {2}guard:[\s\S]*?(?=^ {2}(?:desktop|android|publish):)/m.exec(wf)?.[0] ?? "";
+/* 断言不能对行尾敏感：仓库没有 .gitattributes，Windows runner 的 checkout 是 CRLF
+ * （2026-10-25 实测：本地 LF 通过、CI 的 windows-latest 在同一处报红）。`\s*` 会把
+ * `\r` 一并吃掉，与上面 publish 那条同一写法。 */
 assert.ok(
   /permissions:\s*\n\s+contents: write/.test(guardJob),
   "guard job 没有 contents: write：它自己的 draft 写权限自检必然 403，发版在第一步就失败",
