@@ -755,6 +755,17 @@ export const verifyAndReLogin = async (helper: InfoHelper): Promise<boolean> => 
             || /^(?:未登录|请先登录|登录已失效|登录状态已失效|login required|not authenticated)[。.!]?$/i.test(String(result?.msg ?? result?.message ?? "").trim())) {
             throw Object.assign(new IdAuthError("The university session requires sign-in."), {code: "AUTH_SESSION_EXPIRED"});
         }
+        // The portal reports a dead backend session as HTTP 200
+        // {"result":"error","msg":"出错了！","object":null} while the webvpn gateway
+        // ticket stays alive (2026-10-25 user report: roaming kept failing with this
+        // body, the probe rethrown it as "unexpected response", so the silent relogin
+        // never ran and only a manual sign-out/in recovered). grjbxx is a read-only
+        // personal-info probe: an explicit error verdict with no object is positive
+        // expiry evidence, not a malformed shape. A shapeless {"object":null} stays
+        // non-expired below.
+        if (result?.result === "error" && (result?.object ?? null) === null) {
+            throw Object.assign(new IdAuthError("The university session requires sign-in."), {code: "AUTH_SESSION_EXPIRED"});
+        }
         if (result?.object?.ryh == null || String(result.object.ryh).trim() === "") {
             throw new Error("The university session probe returned an unexpected response.");
         }
@@ -763,9 +774,10 @@ export const verifyAndReLogin = async (helper: InfoHelper): Promise<boolean> => 
         }
         throw Object.assign(new IdAuthError("Saved session ownership could not be verified. Please sign in again."), {code: "AUTH_SESSION_CONFLICT"});
     } catch (e) {
-        // Only a confirmed login page or HTTP 401 can start a new login chain.
-        // Transport, gateway, malformed JSON and unknown response shapes retain
-        // their original failure and never trigger a credential POST.
+        // Only a confirmed login page, HTTP 401 or a positively expired JSON
+        // verdict can start a new login chain. Transport, gateway, malformed
+        // JSON and unknown response shapes retain their original failure and
+        // never trigger a credential POST.
         const detail = e && typeof e === "object" ? e as {status?: number; code?: string} : {};
         if (detail.status !== 401 && detail.code !== "AUTH_SESSION_EXPIRED") throw e;
     }
