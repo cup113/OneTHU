@@ -215,6 +215,15 @@ assert.ok(
   /-F draft=true --jq \.id/.test(wf),
   "guard 的写权限自检必须真的建一个 draft（只有这个动作能证明写权限）",
 );
+/* 自检用的是本 job 自己的 token：仓库默认 `actions/permissions/workflow` 是 read，没声明
+ * `contents: write` 的 job 拿到只读 token（未配 RELEASE_TOKEN 时 GH_TOKEN 就回落到它），
+ * 于是「不需要 PAT 的正常路径」整条不可用——2026-10-25 发版实录：guard 16 秒报 403，
+ * 三端构建全部 skipped。写权限自检能不能过，取决于 guard 自己有没有声明它。 */
+const guardJob = /^ {2}guard:\n([\s\S]*?)(?=^ {2}\S)/m.exec(wf)?.[1] ?? "";
+assert.ok(
+  /permissions:\s*\n\s+contents: write/.test(guardJob),
+  "guard job 没有 contents: write：它自己的 draft 写权限自检必然 403，发版在第一步就失败",
+);
 /* 否定断言只应看代码行：注释里提到某个写法不等于真的用了它（这条断言本身就被自己的注释
  * 绊过一次）。 */
 const wfCode = wf

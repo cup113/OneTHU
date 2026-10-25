@@ -189,8 +189,12 @@ grep -rl "onethu.dev.badge.hidden" apps/desktop/dist/assets || echo "正式版�
   上它也是 false**（探针实测），拿它当写权限预检会误拦正确发布。
 
 因此 `guard` 的写权限自检是「真建一个 draft release 再删掉」（draft 不进 Releases 列表、
-不影响 `releases/latest`）。`GH_TOKEN` 仍是 `secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN`
-回落：正常情况下不需要 PAT，只在 `GITHUB_TOKEN` 真的写不了时作为补救：
+不影响 `releases/latest`）。**`guard` 与 `publish` 都必须各自声明 `permissions: contents: write`**：
+仓库默认权限是 `read`，job 不声明就拿只读 token，自检会 100% 报
+`403 Resource not accessible by integration`——2026-10-25 那轮发版正是漏了 `guard` 这一行，
+在 16 秒内失败、三端构建全部 skipped。`GH_TOKEN` 仍是
+`secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN` 回落：正常情况下不需要 PAT，只在
+`GITHUB_TOKEN` 真的写不了时作为补救：
 
 ```bash
 gh secret set RELEASE_TOKEN --repo cup113/OneTHU   # 可选：fine-grained PAT，只勾 Contents: Read and write

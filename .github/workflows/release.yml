@@ -45,6 +45,12 @@ jobs:
     # 输入组合在开始时校验：等三个 job 跑完才发现「release 没勾 android」是最贵的失败方式
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    # 本 job 的写权限自检要真建一个 draft release 再删掉，所以必须自己声明写权限：
+    # 仓库默认 `actions/permissions/workflow` 是 read，未声明的 job 拿到的是只读 token
+    # （未配 secrets.RELEASE_TOKEN 时 GH_TOKEN 就回落到它）。漏了这一行，自检必然 403，
+    # 于是「不需要 PAT 的正常路径」整条不可用——2026-10-25 发版就是这样在 16 秒内失败的。
+    permissions:
+      contents: write
     steps:
       - name: Validate inputs
         env:
