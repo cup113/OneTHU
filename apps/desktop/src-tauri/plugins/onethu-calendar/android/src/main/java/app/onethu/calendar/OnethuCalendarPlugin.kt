@@ -75,6 +75,8 @@ class OnethuCalendarPlugin(private val activity: android.app.Activity) : Plugin(
 
   private val resolver get() = activity.contentResolver
   private val binding get() = activity.getSharedPreferences("onethu-calendar-binding", android.content.Context.MODE_PRIVATE)
+  /** 日历写入的单线程执行器：命令必须立刻返回，provider 事务不能占着 IPC 线程（见 sync 注释）。 */
+  private val io = java.util.concurrent.Executors.newSingleThreadExecutor()
 
   private fun saveCalendarId(id: Long) {
     check(binding.edit().putLong("calendarId", id).commit()) { "保存系统日历绑定失败" }
@@ -169,39 +171,63 @@ class OnethuCalendarPlugin(private val activity: android.app.Activity) : Plugin(
     invoke.resolve(grantedJson(hasCalendarPermission()))
   }
 
-  /** 幂等同步：清窗口旧事件 → 全量重写 */
+  /**
+   * 幂等同步：清空专属日历 → 全量重写。
+   *
+   * **必须后台执行、命令立刻返回**：Tauri 的 `runCommand` 由 JNI 在 IPC 线程上同步调用，
+   * 期间上游持有 plugins 互斥量；一次数千事件的 provider 事务要十秒，主线程一撞就 ANR /
+   * 黑屏（上游 tauri#14694 同款死锁形态）。2026-10-25 真机实测：点「开启并同步」显示十秒
+   * 「开启中」，此时一滑动即闪退；且闪退发生在「插入已提交、删除未执行」之间，于是每次尝试
+   * 都留下一整份额外副本——重复事件就是这么堆起来的。
+   */
   @Command
-  @Synchronized
   fun sync(invoke: Invoke) {
-    try {
-      if (!hasCalendarPermission()) {
-        invoke.reject("没有系统日历权限（请在系统设置里允许 OneTHU 读写日历）")
-        return
+    val args = try {
+      invoke.parseArgs(SyncArgs::class.java)
+    } catch (e: Exception) {
+      invoke.reject(e.message ?: "同步参数无效")
+      return
+    }
+    if (!hasCalendarPermission()) {
+      invoke.reject("没有系统日历权限（请在系统设置里允许 OneTHU 读写日历）")
+      return
+    }
+    io.execute {
+      try {
+        val result = syncBlocking(args)
+        activity.runOnUiThread { invoke.resolve(result) }
+      } catch (ex: Exception) {
+        val message = ex.message ?: "系统日历同步失败"
+        Logger.error(TAG, message, null)
+        activity.runOnUiThread { invoke.reject(message) }
       }
-      val args = invoke.parseArgs(SyncArgs::class.java)
-      val calId = findOrCreateCalendar(args.calendarTitle)
+    }
+  }
 
-      // Preserve the last written range so moving/removing an old long-range event
-      // also removes its old instance. Capture IDs before inserting replacements.
-      val start = minOf(args.windowStartMs, binding.getLong("windowStart", args.windowStartMs))
-      val end = maxOf(args.windowEndMs, binding.getLong("windowEnd", args.windowEndMs))
-      check(binding.edit().putLong("windowStart", start).putLong("windowEnd", end).commit()) { "保存同步范围失败" }
-      val oldIds = ArrayList<Long>()
+  @Synchronized
+  private fun syncBlocking(args: SyncArgs): JSObject {
+    val calId = findOrCreateCalendar(args.calendarTitle)
+
+    // 专属日历归本应用所有（本地账户），每次同步都是全量重建：只按 CALENDAR_ID 清空，
+    // 不按时间窗挑 id。旧实现按窗口取旧 id、逐条删，历史遗留的重复副本落在窗口外就永远
+    // 删不掉；按日历清空则一次收敛。
+    fun clearAll(): Int {
+      val ids = ArrayList<Long>()
       (resolver.query(Events.CONTENT_URI, arrayOf(Events._ID),
-        "${Events.CALENDAR_ID}=? AND ${Events.DTEND}>=? AND ${Events.DTSTART}<=?",
-        arrayOf(calId.toString(), start.toString(), end.toString()), null
-      ) ?: throw IllegalStateException("无法读取已有系统日历事件")).use { cursor -> while (cursor.moveToNext()) oldIds.add(cursor.getLong(0)) }
-
-      fun deleteIds(ids: List<Long>): Int {
-        var count = 0
-        for (chunk in ids.chunked(200)) {
-          count += resolver.delete(Events.CONTENT_URI,
-            "${Events.CALENDAR_ID}=? AND ${Events._ID} IN (${chunk.joinToString(",") { "?" }})",
-            (listOf(calId.toString()) + chunk.map { it.toString() }).toTypedArray())
-        }
-        return count
+        "${Events.CALENDAR_ID}=?", arrayOf(calId.toString()), null
+      ) ?: throw IllegalStateException("无法读取已有系统日历事件")).use { cursor -> while (cursor.moveToNext()) ids.add(cursor.getLong(0)) }
+      var removed = 0
+      for (chunk in ids.chunked(200)) {
+        removed += resolver.delete(Events.CONTENT_URI,
+          "${Events.CALENDAR_ID}=? AND ${Events._ID} IN (${chunk.joinToString(",") { "?" }})",
+          (listOf(calId.toString()) + chunk.map { it.toString() }).toTypedArray())
       }
-      fun insertBatch(batch: List<EventArg>): List<Long> {
+      // 计数不符不再当成失败：部分 ROM（鸿蒙兼容层实测）的 delete 返回值不可靠，旧实现据此
+      // 抛「旧事件清理未完成」，前端重试又整份重写一遍——这正是重复事件的放大器。
+      return removed
+    }
+
+    fun insertBatch(batch: List<EventArg>): List<Long> {
       val ops = ArrayList<ContentProviderOperation>()
       val eventIndexes = ArrayList<Int>()
       for (ev in batch) {
@@ -239,45 +265,42 @@ class OnethuCalendarPlugin(private val activity: android.app.Activity) : Plugin(
       }
       val results = resolver.applyBatch(CalendarContract.AUTHORITY, ops)
       return eventIndexes.mapNotNull { index -> results[index].uri?.let { android.content.ContentUris.parseId(it) } }
-      }
-      val removed = replaceCalendarMirror(args.events.toList(), oldIds, ::insertBatch, ::deleteIds)
-      val added = args.events.size
-
-      Logger.info(TAG, "系统日历同步完成：+$added / -$removed")
-      val result = JSObject()
-      result.put("added", added)
-      result.put("removed", removed)
-      invoke.resolve(result)
-    } catch (ex: Exception) {
-      val message = ex.message ?: "系统日历同步失败"
-      Logger.error(TAG, message, null)
-      invoke.reject(message)
     }
+
+    val removed = replaceCalendarMirror(args.events.toList(), ::clearAll, ::insertBatch)
+    val added = args.events.size
+    Logger.info(TAG, "系统日历同步完成：+$added / -$removed")
+    return JSObject().put("added", added).put("removed", removed)
   }
 
-  /** 移除 OneTHU 专属日历（连同事件） */
+  /** 移除 OneTHU 专属日历（连同事件）——同样后台执行，删除几千条事件不能占 IPC 线程。 */
   @Command
-  @Synchronized
   fun removeCalendar(invoke: Invoke) {
-    try {
-      if (!hasCalendarPermission()) {
-        invoke.reject("没有系统日历权限")
-        return
+    val args = try {
+      invoke.parseArgs(CalendarTitleArgs::class.java)
+    } catch (e: Exception) {
+      invoke.reject(e.message ?: "参数无效")
+      return
+    }
+    if (!hasCalendarPermission()) {
+      invoke.reject("没有系统日历权限")
+      return
+    }
+    io.execute {
+      try {
+        val id = findOwnedCalendar(args.calendarTitle)
+        if (id != null) {
+          resolver.delete(localAccountUri(Calendars.CONTENT_URI),
+            "${Calendars._ID}=? AND ${Calendars.ACCOUNT_NAME}=? AND ${Calendars.ACCOUNT_TYPE}=?",
+            arrayOf(id.toString(), ACCOUNT_NAME, CalendarContract.ACCOUNT_TYPE_LOCAL))
+        }
+        check(binding.edit().clear().commit()) { "清理系统日历绑定失败" }
+        activity.runOnUiThread { invoke.resolve(JSObject()) }
+      } catch (ex: Exception) {
+        val message = ex.message ?: "移除系统日历失败"
+        Logger.error(TAG, message, null)
+        activity.runOnUiThread { invoke.reject(message) }
       }
-      val args = invoke.parseArgs(CalendarTitleArgs::class.java)
-      val id = findOwnedCalendar(args.calendarTitle)
-      if (id != null) {
-        val removed = resolver.delete(localAccountUri(Calendars.CONTENT_URI),
-          "${Calendars._ID}=? AND ${Calendars.ACCOUNT_NAME}=? AND ${Calendars.ACCOUNT_TYPE}=?",
-          arrayOf(id.toString(), ACCOUNT_NAME, CalendarContract.ACCOUNT_TYPE_LOCAL))
-        check(removed == 1) { "专属日历尚未移除，请重试" }
-      }
-      check(binding.edit().clear().commit()) { "清理系统日历绑定失败" }
-      invoke.resolve(JSObject())
-    } catch (ex: Exception) {
-      val message = ex.message ?: "移除系统日历失败"
-      Logger.error(TAG, message, null)
-      invoke.reject(message)
     }
   }
 

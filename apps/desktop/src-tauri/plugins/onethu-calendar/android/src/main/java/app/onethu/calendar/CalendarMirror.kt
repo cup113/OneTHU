@@ -1,32 +1,24 @@
 package app.onethu.calendar
 
-/** Stage every replacement before removing the previous mirror. No Android I/O in this policy. */
+/** Clear the whole mirror before writing the replacement.
+ *
+ * The calendar is app-owned (local account `OneTHU`), so it is regenerated from app data every
+ * sync; losing it on a failed insert is self-healing, while leaving the previous copy behind is
+ * not. The old implementation inserted first and deleted afterwards, so a process death between
+ * the two steps left a complete extra copy — on 鸿蒙/HarmonyOS that produced dozens of duplicate
+ * sets per user (2026-10-25). Deleting first makes an interrupted run converge instead of grow.
+ */
 internal fun <T> replaceCalendarMirror(
   events: List<T>,
-  oldIds: List<Long>,
+  clearAll: () -> Int,
   insertBatch: (List<T>) -> List<Long>,
-  deleteIds: (List<Long>) -> Int,
 ): Int {
-  val inserted = ArrayList<Long>()
-  try {
-    // Each event has at most one reminder operation; 150 events <= 300 operations.
-    for (batch in events.chunked(150)) {
-      val ids = insertBatch(batch)
-      inserted.addAll(ids)
-      check(ids.size == batch.size) { "系统日历未完整返回新增事件标识" }
-    }
-  } catch (ex: Exception) {
-    try {
-      check(deleteIds(inserted) == inserted.size) { "部分新事件未清理" }
-    } catch (cleanup: Exception) {
-      throw IllegalStateException("写入失败且新事件清理未完成，请重试同步；原有事件尚未删除", cleanup)
-    }
-    throw ex
+  val removed = clearAll()
+  // Each event has at most one reminder operation; 150 events <= 300 operations.
+  for (batch in events.chunked(150)) {
+    val ids = insertBatch(batch)
+    check(ids.size == batch.size) { "系统日历未完整返回新增事件标识" }
   }
-  // If old cleanup fails, keep the complete new set. A retry can safely replace
-  // both sets; deleting new events here would lose already removed old entries.
-  val removed = deleteIds(oldIds)
-  check(removed == oldIds.size) { "旧事件清理未完成，请重试同步" }
   return removed
 }
 

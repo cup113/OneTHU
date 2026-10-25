@@ -4,51 +4,55 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CalendarMirrorTest {
-  @Test fun stagesAllBatchesBeforeDeletingOldEvents() {
+  @Test fun clearsWholeMirrorBeforeWritingReplacement() {
     val operations = ArrayList<String>()
-    val count = replaceCalendarMirror((1..301).toList(), listOf(99L), { batch ->
+    val count = replaceCalendarMirror((1..301).toList(), { operations.add("clear"); 42 }, { batch ->
       operations.add("insert:${batch.size}"); batch.map { it.toLong() + 1000 }
-    }, { ids -> operations.add("delete:${ids.size}"); ids.size })
-    assertEquals(listOf("insert:150", "insert:150", "insert:1", "delete:1"), operations)
-    assertEquals(1, count)
+    })
+    // Delete-first: an interrupted run must converge instead of leaving a second copy behind.
+    assertEquals(listOf("clear", "insert:150", "insert:150", "insert:1"), operations)
+    assertEquals(42, count)
   }
-  @Test fun failedSecondBatchRemovesOnlyStagedNewEvents() {
-    val deleted = ArrayList<List<Long>>()
+
+  @Test fun clearFailureAbortsBeforeWritingAnything() {
+    var inserted = 0
+    try {
+      replaceCalendarMirror(listOf(1, 2), { error("provider refused") }, { batch -> inserted += batch.size; batch.map { it.toLong() } })
+      fail("must reject")
+    } catch (e: IllegalStateException) {
+      assertEquals("provider refused", e.message)
+    }
+    assertEquals(0, inserted)
+  }
+
+  @Test fun partialInsertKeepsWhatWasWrittenSoNextRunReplacesIt() {
     var calls = 0
     try {
-      replaceCalendarMirror((1..151).toList(), listOf(9L), { batch ->
+      replaceCalendarMirror((1..151).toList(), { 0 }, { batch ->
         calls++; if (calls == 2) error("provider failed")
         batch.map { it.toLong() + 1000 }
-      }, { ids -> deleted.add(ids.toList()); ids.size })
+      })
       fail("must reject")
-    } catch (e: IllegalStateException) { assertEquals("provider failed", e.message) }
-    assertEquals(1, deleted.size)
-    assertEquals(150, deleted[0].size)
-    assertFalse(deleted[0].contains(9L))
+    } catch (e: IllegalStateException) {
+      assertEquals("provider failed", e.message)
+    }
+    // First batch of 150 stays on the calendar; the next sync clears it and rewrites all 151.
+    assertEquals(2, calls)
   }
-  @Test fun cleanupFailureIsReportedAndNeverDeletesOldMirror() {
-    val deleted = ArrayList<List<Long>>()
-    var calls = 0
+
+  @Test fun incompleteIdentifierReturnIsRejected() {
     try {
-      replaceCalendarMirror((1..151).toList(), listOf(9L), { batch ->
-        calls++; if (calls == 2) error("provider failed")
-        batch.map { it.toLong() + 1000 }
-      }, { ids -> deleted.add(ids.toList()); 0 })
+      replaceCalendarMirror(listOf("a", "b"), { 0 }, { listOf(7L) })
       fail("must reject")
-    } catch (e: IllegalStateException) { assertTrue(e.message!!.contains("原有事件尚未删除")) }
-    assertFalse(deleted.flatten().contains(9L))
+    } catch (e: IllegalStateException) {
+      assertTrue(e.message!!.contains("未完整返回"))
+    }
   }
-  @Test fun partialOldRemovalKeepsCompleteReplacementForRetry() {
-    val deleted = ArrayList<List<Long>>()
-    try {
-      replaceCalendarMirror(listOf("a", "b"), listOf(1L, 2L), { listOf(101L, 102L) }, { ids -> deleted.add(ids.toList()); 1 })
-      fail("must reject")
-    } catch (e: IllegalStateException) { assertTrue(e.message!!.contains("旧事件清理未完成")) }
-    assertEquals(listOf(listOf(1L, 2L)), deleted)
+
+  @Test fun emptyMirrorClearsPreviousEventsWithoutInserting() {
+    assertEquals(2, replaceCalendarMirror(emptyList<Unit>(), { 2 }, { error("must not insert") }))
   }
-  @Test fun emptyMirrorDeletesPreviousEventsWithoutInserting() {
-    assertEquals(2, replaceCalendarMirror(emptyList<Unit>(), listOf(1L, 2L), { error("must not insert") }, { it.size }))
-  }
+
   @Test fun allDayPreservesCampusDateAtUtcMidnight() {
     val formatter = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").apply { timeZone = java.util.TimeZone.getTimeZone("Asia/Shanghai") }
     val utc = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
