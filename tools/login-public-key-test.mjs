@@ -281,8 +281,8 @@ await check("session probe transport, HTTP errors and malformed responses cannot
     assert.equal(admissions, 0, shape);
   }
 });
-await check("only confirmed HTTP 401, login pages and explicit JSON expiry permit normal recovery", async () => {
-  for (const shape of ["401", "cookie-login", "user-login", "json-expired", "alive"]) {
+await check("only confirmed HTTP 401, login pages, explicit JSON expiry and portal error verdicts permit normal recovery", async () => {
+  for (const shape of ["401", "cookie-login", "user-login", "json-expired", "portal-error", "alive"]) {
     clearOutstandingLogin();
     let posts = 0, admissions = 0;
     const h = { ...helper(), beforeLoginAttemptHook: async () => { admissions++; } };
@@ -292,7 +292,13 @@ await check("only confirmed HTTP 401, login pages and explicit JSON expiry permi
         if (shape === "401") return reply("expired", url, 401);
         return reply(shape === "cookie-login" ? '<a href="https://id.tsinghua.edu.cn/do/off/ui/auth/login/form/fixture/0">Sign in</a>' : "XSRF-TOKEN=fixture-csrf;", url);
       }
-      if (url.includes("/grjbxx")) return reply(shape === "user-login" ? KEY : shape === "json-expired" ? '{"status":401}' : '{"object":{"ryh":"123456"}}', url);
+      if (url.includes("/grjbxx")) return reply(
+        shape === "user-login" ? KEY
+          : shape === "json-expired" ? '{"status":401}'
+          // 2026-10-25 用户实录：门户后端会话死亡时 HTTP 200 的统一错误裁决——
+        // 网关票还活着，登录页/401 都不出现；不认它就永远只剩手动退出重登。
+          : shape === "portal-error" ? '{"result":"error","msg":"出错了！","object":null}'
+          : '{"object":{"ryh":"123456"}}', url);
       if (url.includes("/login?oauth_login=true")) return reply(KEY, url);
       if (url === ID_CHECK || url.includes("/do/off/ui/auth/login/form/")) return reply(SUCCESS, url);
       if (url.endsWith("/fixture-callback")) return reply("portal", "https://webvpn.tsinghua.edu.cn/");
