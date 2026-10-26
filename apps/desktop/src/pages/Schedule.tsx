@@ -326,6 +326,53 @@ function detectSemester(d: Date, list: SemInfo[]): { sem: SemInfo; weekNo: numbe
 }
 
 /* ---------- 事件编辑器草稿（页面级：两视图共用的底部编辑卡） ---------- */
+/** 编辑器可表达的重复模式（IcsRrule 的受控子集；grill 2026-10-26：无每年/无次数 UI） */
+type RepeatMode = "none" | "daily" | "weekly" | "biweekly" | "monthly";
+interface RepeatDraft {
+  mode: RepeatMode;
+  /** 每周系选中的星期（1=周一..7=周日）；空 = 首次切入每周时按首场日期补默认 */
+  byDay: number[];
+  /** 截止日（Y-M-D，含当天）；空串 = 永不 */
+  until: string;
+}
+/** ICS 星期序（MO..SU）↔ 应用 dayOfWeek（1..7，周一=1；与 DAY_NAMES 下标一致） */
+const ICS_WEEKDAYS: readonly string[] = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
+const dayOfWeekOf = (ymd: string): number => {
+  const t = new Date(ymd.replace(/-/g, "/")).getDay();
+  return t === 0 ? 7 : t;
+};
+/** 既有事件 rrule → 编辑器受控形态。byDay 缺省回填首场星期；until 取校园时区当日（含当天） */
+function repeatDraftOf(src: caldav.IcsEvent | undefined, dateYmd: string): RepeatDraft {
+  const r = src?.rrule;
+  if (!r) return { mode: "none", byDay: [], until: "" };
+  const mode: RepeatMode = r.freq === "DAILY" ? "daily"
+    : r.freq === "MONTHLY" ? "monthly"
+    : r.freq === "WEEKLY" && r.interval > 1 ? "biweekly" : "weekly";
+  const byDay = (r.byDay ?? []).map((w) => ICS_WEEKDAYS.indexOf(w) + 1).filter((n) => n >= 1);
+  let until = "";
+  if (r.until !== undefined) {
+    const w = caldav.epochToWall(caldav.CAMPUS_TZ, r.until);
+    until = `${w.y}-${padN(w.mo)}-${padN(w.d)}`;
+  }
+  return { mode, byDay: byDay.length ? byDay : [dayOfWeekOf(dateYmd)], until };
+}
+/** 受控形态 → IcsRrule（mode=none → undefined）。UNTIL 取截止日 23:59:59（展开含当天全场） */
+function rruleOfDraft(draft: RepeatDraft): caldav.IcsRrule | undefined {
+  if (draft.mode === "none") return undefined;
+  const until = draft.until
+    ? (() => {
+      const [y, mo, d] = draft.until.split("-").map(Number);
+      return caldav.wallToEpoch(caldav.CAMPUS_TZ, { y: y!, mo: mo!, d: d!, h: 23, mi: 59, s: 59 });
+    })()
+    : undefined;
+  return {
+    freq: draft.mode === "daily" ? "DAILY" : draft.mode === "monthly" ? "MONTHLY" : "WEEKLY",
+    interval: draft.mode === "biweekly" ? 2 : 1,
+    ...(draft.mode === "weekly" || draft.mode === "biweekly" ? { byDay: draft.byDay.map((n) => ICS_WEEKDAYS[n - 1]!) } : {}),
+    ...(until !== undefined ? { until } : {}),
+  };
+}
+
 interface Draft {
   uid?: string;
   source?: caldav.IcsEvent;
@@ -342,6 +389,11 @@ interface Draft {
   originalCloud: boolean; // 编辑中的是云端事件
   /** 「在桌面小组件显示」：写进事件的私有标记（X-ONETHU-WIDGET），勾了才进桌面「今天」卡片 */
   widget: boolean;
+  /** 重复规则（受控子集）。repeatTouched=false 时保存原样透传 source.rrule（保 COUNT 等 UI 外字段） */
+  repeat: RepeatDraft;
+  repeatTouched: boolean;
+  /** 导入的「多天+重复」系列不开规则控件（grill 2026-10-26：跨天×重复互斥），维持透传+标签 */
+  repeatLocked: boolean;
 }
 
 const emptyDraft = (date: string, canCloud: boolean): Draft => ({
@@ -349,6 +401,7 @@ const emptyDraft = (date: string, canCloud: boolean): Draft => ({
   toCloud: canCloud, originalCloud: false,
   // 默认不勾：自定义日程一直不上小组件，勾了才上（保持既有行为，避免存量日程突然挤进卡片）
   widget: false,
+  repeat: { mode: "none", byDay: [], until: "" }, repeatTouched: false, repeatLocked: false,
 });
 
 /* ---------- 悬浮圆钮拖动位置（与硬刷新浮钮同一手势协议，Layout.tsx HardRefreshButton） ----------
@@ -857,16 +910,22 @@ export function SchedulePage() {
     const w = caldav.epochToWall("Asia/Shanghai", src.start);
     const we = caldav.epochToWall("Asia/Shanghai", src.end);
     const lastDay = caldav.epochToWall("Asia/Shanghai", src.allDay ? src.end - 1 : src.end);
+    const date = `${w.y}-${padN(w.mo)}-${padN(w.d)}`;
+    const endDate = `${lastDay.y}-${padN(lastDay.mo)}-${padN(lastDay.d)}`;
     setDraft({
       source: { ...src },
       sourceEmail: kind === "cloud" ? cal.email : undefined,
-      uid: src.uid, title: src.summary, date: `${w.y}-${padN(w.mo)}-${padN(w.d)}`,
-      endDate: `${lastDay.y}-${padN(lastDay.mo)}-${padN(lastDay.d)}`,
+      uid: src.uid, title: src.summary, date,
+      endDate,
       start: `${padN(w.h)}:${padN(w.mi)}`, end: `${padN(we.h)}:${padN(we.mi)}`,
       allDay: !!src.allDay, location: src.location ?? "", note: src.description ?? "",
       toCloud: kind === "cloud", originalCloud: kind === "cloud",
       // 原样带回：非 Android 上这个勾选框不显示，保存时也不会把标记抹掉
       widget: src.onethuWidget === true,
+      repeat: repeatDraftOf(src, date),
+      repeatTouched: false,
+      // 多天系列（master 跨日）锁规则控件：改规则会连系列时长一起改，维持透传（互斥决策）
+      repeatLocked: !!src.rrule && endDate !== date,
     });
   };
   /** 列表行：云/本可编辑，课程/考试/作业打开详情。 */
@@ -890,8 +949,18 @@ export function SchedulePage() {
     setMsg(null);
     try {
       if (draft.originalCloud && draft.sourceEmail !== cal.email) throw new Error(i18n("pages.schedule.7e335ee498e8"));
+      // 重复规则校验只在用户动过规则控件时做；未动过走透传（多天锁定系列同）
+      const repeatEdited = draft.repeatTouched && !draft.repeatLocked;
+      if (repeatEdited) {
+        if ((draft.repeat.mode === "weekly" || draft.repeat.mode === "biweekly") && draft.repeat.byDay.length === 0) {
+          throw new Error(i18n("pages.schedule.f6ddcc767765"));
+        }
+        if (draft.repeat.until && draft.repeat.until < draft.date) throw new Error(i18n("pages.schedule.c80254eaafba"));
+      }
+      // 重复与跨天互斥：用户激活重复后，系列时长收敛为单日（锁定系列不受影响）
+      const repeatActive = repeatEdited && draft.repeat.mode !== "none";
       const allDay = draft.allDay;
-      const { start, end } = calendarDraftRange(draft);
+      const { start, end } = calendarDraftRange(repeatActive ? { ...draft, endDate: draft.date } : draft);
       const uid = draft.uid ?? `onethu-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}@onethu`;
       const ev: caldav.IcsEvent = {
         ...draft.source,
@@ -902,6 +971,11 @@ export function SchedulePage() {
         // 桌面小组件「今天」卡片：勾了才带上这个私有标记（缺省不写 = 不上卡片）
         onethuWidget: draft.widget || undefined,
       };
+      if (repeatEdited) {
+        // 显式赋值覆盖 spread 透传：清「重复」必须真清掉 rrule；改规则则清掉绑定旧场次的排除场
+        ev.rrule = rruleOfDraft(draft.repeat);
+        ev.exdates = undefined;
+      }
       await saveCalendarEvent(ev, { cloud: draft.toCloud, originalCloud: draft.uid ? draft.originalCloud : undefined });
       setDraft(null);
       setMsg(i18n("pages.schedule.193f229df3d9"));
@@ -1486,7 +1560,7 @@ export function SchedulePage() {
           >
             <Stack gap={2}>
               {msg ? <Banner tone="info">{msg}</Banner> : null}
-              {sd.source?.rrule ? <Text slot="label" tone="quiet">{i18n("pages.schedule.3df7a207af75")}</Text> : null}
+              {sd.source?.rrule || sd.repeat.mode !== "none" ? <Text slot="label" tone="quiet">{i18n("pages.schedule.3df7a207af75")}</Text> : null}
               <Field label={i18n("pages.schedule.c3405f8c7d9d")}>
                 <Input value={sd.title} placeholder={i18n("pages.schedule.bd2f0b059d14")} onChange={(value) => setDraft({ ...sd, title: value })} />
               </Field>
@@ -1498,7 +1572,8 @@ export function SchedulePage() {
                 </Grow>
                 <Grow>
                   <Field label={sd.allDay ? i18n("pages.schedule.ce40d3d5810a") : i18n("pages.schedule.895cd52fbbb6")}>
-                    <Input type="date" value={sd.endDate} min={sd.date} onChange={(value) => setDraft({ ...sd, endDate: value })} aria-label={i18n("pages.schedule.895cd52fbbb6")} />
+                    {/* 重复与跨天互斥：激活重复后结束日锁定为首场当天 */}
+                    <Input type="date" value={sd.endDate} min={sd.date} disabled={sd.repeat.mode !== "none"} onChange={(value) => setDraft({ ...sd, endDate: value })} aria-label={i18n("pages.schedule.895cd52fbbb6")} />
                   </Field>
                 </Grow>
                 <Checkbox checked={sd.allDay} onChange={(v2) => setDraft({ ...sd, allDay: v2 })} label={i18n("pages.schedule.0b97c851e4a7")} />
@@ -1516,6 +1591,83 @@ export function SchedulePage() {
                     </Field>
                   </Grow>
                 </Inline>
+              ) : null}
+              {/* 重复规则（grill 2026-10-26：不重复/每天/每周/每两周/每月；永不或截止日期收尾）。
+               *  锁定系列（导入的多天+重复）不渲染控件，仅保留上方整系列标签。 */}
+              {!sd.repeatLocked ? (
+                <Inline gap={2} wrap vAlign="end">
+                  <Grow>
+                    <Field label={i18n("pages.schedule.609cf2fdf6ff")}>
+                      <Select
+                        value={sd.repeat.mode}
+                        aria-label={i18n("pages.schedule.609cf2fdf6ff")}
+                        options={[
+                          { value: "none", label: i18n("pages.schedule.ebdc3594be5c") },
+                          { value: "daily", label: i18n("pages.schedule.eea1694c235b") },
+                          { value: "weekly", label: i18n("pages.schedule.92845d3b531d") },
+                          { value: "biweekly", label: i18n("pages.schedule.85abb11694fe") },
+                          { value: "monthly", label: i18n("pages.schedule.68b21af949de") },
+                        ]}
+                        onChange={(value) => setDraft({
+                          ...sd,
+                          repeat: {
+                            ...sd.repeat,
+                            mode: value as RepeatMode,
+                            // 首次切入每周系：默认勾首场日期的星期（显式选择语义，之后不随日期联动）
+                            byDay: (value === "weekly" || value === "biweekly") && sd.repeat.byDay.length === 0 ? [dayOfWeekOf(sd.date)] : sd.repeat.byDay,
+                          },
+                          endDate: value === "none" ? sd.endDate : sd.date,
+                          repeatTouched: true,
+                        })}
+                      />
+                    </Field>
+                  </Grow>
+                  {sd.repeat.mode !== "none" ? (
+                    <Grow>
+                      <Field label={i18n("pages.schedule.35329267c76a")}>
+                        <Select
+                          value={sd.repeat.until ? "until" : "never"}
+                          aria-label={i18n("pages.schedule.35329267c76a")}
+                          options={[
+                            { value: "never", label: i18n("pages.schedule.bf2431e3619d") },
+                            { value: "until", label: i18n("pages.schedule.31802424217f") },
+                          ]}
+                          onChange={(value) => setDraft({ ...sd, repeat: { ...sd.repeat, until: value === "until" ? (sd.repeat.until || sd.date) : "" }, repeatTouched: true })}
+                        />
+                      </Field>
+                    </Grow>
+                  ) : null}
+                  {sd.repeat.mode !== "none" && sd.repeat.until ? (
+                    <Grow>
+                      <Field label={i18n("pages.schedule.31802424217f")}>
+                        <Input type="date" value={sd.repeat.until} min={sd.date} onChange={(value) => setDraft({ ...sd, repeat: { ...sd.repeat, until: value }, repeatTouched: true })} aria-label={i18n("pages.schedule.31802424217f")} />
+                      </Field>
+                    </Grow>
+                  ) : null}
+                </Inline>
+              ) : null}
+              {(sd.repeat.mode === "weekly" || sd.repeat.mode === "biweekly") && !sd.repeatLocked ? (
+                <Inline gap={1} wrap>
+                  {DAY_NAMES.map((name, i) => (
+                    <Chip
+                      key={i}
+                      selected={sd.repeat.byDay.includes(i + 1)}
+                      onClick={() => setDraft({
+                        ...sd,
+                        repeat: {
+                          ...sd.repeat,
+                          byDay: sd.repeat.byDay.includes(i + 1)
+                            ? sd.repeat.byDay.filter((d) => d !== i + 1)
+                            : [...sd.repeat.byDay, i + 1].sort((a, b) => a - b),
+                        },
+                        repeatTouched: true,
+                      })}
+                    >{name}</Chip>
+                  ))}
+                </Inline>
+              ) : null}
+              {sd.repeatTouched && sd.source?.rrule ? (
+                <Text slot="label" tone="faint">{i18n("pages.schedule.94b9ed1021c2")}</Text>
               ) : null}
               <Field label={i18n("pages.schedule.253ac66fb8e1")}>
                 <Input value={sd.location} placeholder={i18n("pages.schedule.537352400c49")} onChange={(value) => setDraft({ ...sd, location: value })} />
