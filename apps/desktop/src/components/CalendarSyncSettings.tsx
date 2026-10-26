@@ -113,7 +113,9 @@ export function CalendarSyncSettings() {
                     setSysMsg(null);
                     void syncSystemCalendar()
                       .then((r) =>
-                        setSysMsg(r.skipped ? i18n("components.calendarsyncsettings.40012cfe27b0") : i18n("components.calendarsyncsettings.8282a625a7e6", { added: String(r.added), removed: String(r.removed) })),
+                        // 差异同步：内容没变时 added/removed 都是 0（一次 provider 都没写），
+                        // 说「已写入 0 条」会让人以为坏了 —— 与指纹跳过同样报「已是最新」。
+                        setSysMsg(r.skipped || (r.added === 0 && r.removed === 0) ? i18n("components.calendarsyncsettings.40012cfe27b0") : i18n("components.calendarsyncsettings.8282a625a7e6", { added: String(r.added), removed: String(r.removed) })),
                       )
                       .catch((e: unknown) => setSysMsg(i18n("components.calendarsyncsettings.4d103a2b0e94", { value: String(e instanceof Error ? e.message : String(e)) })))
                       .finally(() => setSysBusy(false));

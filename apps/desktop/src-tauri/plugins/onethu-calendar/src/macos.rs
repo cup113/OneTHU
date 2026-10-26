@@ -196,7 +196,9 @@ pub fn sync(payload: SyncPayload, path: &Path) -> Result<SyncResult, String> {
 
     unsafe { store.commit() }.map_err(|e| format!("提交系统日历变更失败：{e:?}"))?;
 
-    Ok(SyncResult { added, removed, warning })
+    // macOS 仍是「窗口内清旧 → 全量重写」（EventKit 没有 Android 兼容层那种删除原语问题），
+    // 所以这里没有"未变"计数，恒为 0。
+    Ok(SyncResult { added, removed, unchanged: 0, warning })
 }
 
 /// 移除专属日历（连同事件）
