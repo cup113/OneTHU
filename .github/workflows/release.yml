@@ -36,7 +36,7 @@ on:
         type: string
         default: ""
       version:
-        description: "分叉版本覆盖（形如 0.11.3-2，留空用 tauri.fork.conf.json）。带 release 时必填"
+        description: "分叉版本覆盖（形如 0.11.4-1，留空用 tauri.fork.conf.json）。带 release 时必填"
         type: string
         default: ""
       release:
@@ -74,7 +74,7 @@ jobs:
             exit 1
           fi
           if [ -n "$VERSION" ] && ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$'; then
-            echo "::error::version 必须形如 <主>.<次>.<补丁>-<纯数字>（如 0.11.3-2），当前是 $VERSION"
+            echo "::error::version 必须形如 <主>.<次>.<补丁>-<纯数字>（如 0.11.4-1），当前是 $VERSION"
             exit 1
           fi
           if [ "$RELEASE" = "true" ]; then
