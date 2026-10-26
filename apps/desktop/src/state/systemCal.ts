@@ -399,6 +399,8 @@ export function fingerprintOf(p: SyncPayloadArg): string {
 export interface SystemCalSyncOutcome {
   added: number;
   removed: number;
+  /** 内容未变、一次 provider 都没写的条数（差异同步；macOS 全量重写时恒为 0） */
+  unchanged: number;
   /** 指纹未变跳过了原生写入 */
   skipped: boolean;
 }
@@ -428,7 +430,7 @@ function runSync(opts?: { silent?: boolean; enable?: boolean }): Promise<SystemC
       if (opts?.silent && cfg.fingerprint === fingerprint) {
         cfg = { ...cfg, lastError: null, failStreak: 0 };
         await persistCfg();
-        return { added: 0, removed: 0, skipped: true };
+        return { added: 0, removed: 0, unchanged: 0, skipped: true };
       }
       const granted = await invokePlugin<boolean>("request_permission");
       if (!granted) throw new Error(i18n("state.systemcal.d2d00f793981"));
@@ -437,7 +439,7 @@ function runSync(opts?: { silent?: boolean; enable?: boolean }): Promise<SystemC
       // 崩溃死在原生时"最后一行 = 同步开始"即是死区证据
       void logLine(`[SYSCAL] 原生同步开始 events=${payload.events.length} fp=${fingerprint}`).catch(() => undefined);
       const t0 = Date.now();
-      const r = await invokePlugin<{ added: number; removed: number; warning?: string }>("sync", { payload });
+      const r = await invokePlugin<{ added: number; removed: number; unchanged?: number; warning?: string }>("sync", { payload });
       cfg = {
         ...cfg,
         enabled: revision === policyRevision && !removePending ? (opts?.enable || !cfg.stopped ? true : cfg.enabled) : cfg.enabled,
@@ -448,8 +450,8 @@ function runSync(opts?: { silent?: boolean; enable?: boolean }): Promise<SystemC
       };
       await persistCfg();
       autoPausedLogged = false;
-      void logLine(`[SYSCAL] 原生同步完成 +${r.added}/-${r.removed} ${Date.now() - t0}ms`).catch(() => undefined);
-      return { added: r.added, removed: r.removed, skipped: false };
+      void logLine(`[SYSCAL] 原生同步完成 +${r.added}/-${r.removed}/=${r.unchanged ?? 0} ${Date.now() - t0}ms`).catch(() => undefined);
+      return { added: r.added, removed: r.removed, unchanged: r.unchanged ?? 0, skipped: false };
     } catch (err) {
       const streak = (cfg.failStreak ?? 0) + 1;
       const raw = err instanceof Error ? err.message : String(err);
