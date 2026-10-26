@@ -7276,6 +7276,7 @@ const locale = {
     "state.sealedshare.48c72cc17f20": "当前云盘账号无权读取这条分享，或分享已被撤销",
     "state.sealedshare.627f3e9496d7": "分享内容校验失败，请让发送者重新分享",
     "state.sealedshare.8246a8d4e7da": "私密分享格式不正确",
+    "state.systemcal.0a936b980101": "系统日历连续同步失败 {length} 次，已暂停自动同步（手动同步成功后恢复）",
     "state.systemcal.1af23354d905": "系统日历设置文件无效，请恢复备份后重试",
     "state.systemcal.30fb8d6869b0": "校历学期范围无效，已中止同步",
     "state.systemcal.3d8856ab74b0": "当前学期作业尚未就绪，请在网络学堂选择当前学期后重试；已有系统日历保持不变",

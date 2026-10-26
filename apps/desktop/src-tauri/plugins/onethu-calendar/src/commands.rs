@@ -17,8 +17,11 @@ pub async fn request_permission<R: Runtime>(app: AppHandle<R>) -> Result<bool, S
     #[cfg(target_os = "android")]
     {
         let handle = app.state::<crate::OnethuCalendar<R>>().0.clone();
+        // 权限弹窗由用户决定何时关，等待期不定 → 必须走异步桥（同步变体会挂住一个
+        // tokio worker 直到用户点完弹窗，tauri 上游对长阻塞 mobile 命令的一贯警告）
         let v: serde_json::Value = handle
-            .run_mobile_plugin("requestPermission", serde_json::json!({}))
+            .run_mobile_plugin_async("requestPermission", serde_json::json!({}))
+            .await
             .map_err(|e| e.to_string())?;
         Ok(v.get("granted").and_then(|g| g.as_bool()).unwrap_or(false))
     }
@@ -41,8 +44,11 @@ pub async fn sync<R: Runtime>(app: AppHandle<R>, payload: SyncPayload) -> Result
     #[cfg(target_os = "android")]
     {
         let handle = app.state::<crate::OnethuCalendar<R>>().0.clone();
+        // 同步本体跑在 Kotlin 单线程执行器上（见 OnethuCalendarPlugin.sync），原生侧几秒起步；
+        // 必须用异步桥等待，同步变体会把一个 tokio worker 整段挂死在 rx.recv() 上
         let v: serde_json::Value = handle
-            .run_mobile_plugin("sync", payload)
+            .run_mobile_plugin_async("sync", payload)
+            .await
             .map_err(|e| e.to_string())?;
         serde_json::from_value(v).map_err(|e| format!("系统日历返回异常：{e}"))
     }
@@ -58,14 +64,39 @@ pub async fn sync<R: Runtime>(app: AppHandle<R>, payload: SyncPayload) -> Result
     }
 }
 
+/// 上次同步的面包屑（进程级死亡后的现场；诊断摘要里带出来）。
+///
+/// 为什么需要它：鸿蒙兼容层上 adb 拿不到通道，原生侧日志（Kotlin Logger）只进 logcat，
+/// 进程被信号带走后现场就没了。Kotlin 侧把每一步 provider 调用落盘 + fsync，这里读回来
+/// 交给前端，用户点「复制诊断摘要」即可贴出——最后一行就是死亡边界。
+#[tauri::command]
+pub async fn sync_trace<R: Runtime>(app: AppHandle<R>) -> Result<String, String> {
+    #[cfg(target_os = "android")]
+    {
+        let handle = app.state::<crate::OnethuCalendar<R>>().0.clone();
+        let v: serde_json::Value = handle
+            .run_mobile_plugin_async("syncTrace", serde_json::json!({}))
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(v.get("text").and_then(|t| t.as_str()).unwrap_or_default().to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = &app;
+        Ok(String::new())
+    }
+}
+
 /// 移除 OneTHU 专属日历（连同其中全部事件）
 #[tauri::command]
 pub async fn remove_calendar<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     #[cfg(target_os = "android")]
     {
         let handle = app.state::<crate::OnethuCalendar<R>>().0.clone();
+        // 删除几千条事件同样在后台执行器上跑数秒 → 异步桥
         let _v: serde_json::Value = handle
-            .run_mobile_plugin("removeCalendar", serde_json::json!({ "calendarTitle": crate::CALENDAR_TITLE }))
+            .run_mobile_plugin_async("removeCalendar", serde_json::json!({ "calendarTitle": crate::CALENDAR_TITLE }))
+            .await
             .map_err(|e| e.to_string())?;
         Ok(())
     }

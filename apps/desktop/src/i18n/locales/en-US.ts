@@ -7276,6 +7276,7 @@ const locale = {
     "state.sealedshare.48c72cc17f20": "The current cloud drive account has no access to this share, or the share has been revoked",
     "state.sealedshare.627f3e9496d7": "Share content verification failed. Ask the sender to share again.",
     "state.sealedshare.8246a8d4e7da": "The private share format is invalid",
+    "state.systemcal.0a936b980101": "System calendar sync failed {length} times in a row; auto-sync is paused (a successful manual sync resumes it)",
     "state.systemcal.1af23354d905": "The system calendar settings file is invalid. Restore from a backup and retry.",
     "state.systemcal.30fb8d6869b0": "The academic calendar semester range is invalid; sync was aborted",
     "state.systemcal.3d8856ab74b0": "Assignments for the current semester are not ready yet. Select the current semester in Web Learning and retry; the existing system calendar is unchanged",

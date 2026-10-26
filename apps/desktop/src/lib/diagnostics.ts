@@ -49,6 +49,24 @@ async function persistenceProbe(): Promise<string> {
   }
 }
 
+/** 上次系统日历同步的现场（原生侧落盘的面包屑）。
+ *
+ *  为什么放在摘要里：鸿蒙兼容层上 adb 拿不到通道，进程级死亡后 logcat 也带不走；
+ *  原生侧把每一步 provider 调用落盘 + fsync，这里是唯一能把它读出来、并让用户一键贴出的路。
+ *  末行就是死亡边界——例如只有 `clear.start` 没有 `clear.done`，即死在删除调用里。 */
+async function calendarSyncTrace(): Promise<string> {
+  if (!isTauri) return "-";
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const text = await invoke<string>("plugin:onethu-calendar|sync_trace");
+    const lines = String(text ?? "").trim().split("\n").filter(Boolean);
+    if (!lines.length) return "无记录";
+    return lines.slice(-16).join(" ⏎ ");
+  } catch (e) {
+    return `读取失败：${e instanceof Error ? e.message : String(e)}`;
+  }
+}
+
 /** 摘要正文（纯文本，可直接粘贴到反馈里）。 */
 export async function buildDiagnostics(): Promise<string> {
   const remembered = await loadRemembered().catch(() => null);
@@ -57,6 +75,7 @@ export async function buildDiagnostics(): Promise<string> {
     ["环境", `${hostLabel()} · ${navigator.userAgent.slice(0, 90)}`],
     ["时间", new Date().toISOString()],
     ["本机写盘", await persistenceProbe()],
+    ["日历同步", await calendarSyncTrace()],
     ["登录状态", `${session.state} · 已保存密码 ${remembered ? "是" : "否"}`],
     ["学习会话", learn.lastCsrfDebug || "本次运行没有取过"],
     ["登录入口", oneLine(lastAuthEntryText(), 160) || "-"],
