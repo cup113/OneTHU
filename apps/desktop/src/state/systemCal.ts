@@ -20,7 +20,7 @@ import { t as i18n } from "../i18n/index.js";
  *   免得算出少了作业 DDL 块的半量载荷）；
  * - 课表/考试带提前 15 分钟提醒，手动日程保留已有提醒。
  *
- * 存储：syscal.cfg { enabled, lastSyncAt, lastCount, lastError, fingerprint }。
+ * 存储：syscal.cfg { enabled, lastSyncAt, lastCount, lastError, fingerprint, failStreak }。
  */
 import { useEffect, useState } from "react";
 import { caldav } from "@onethu/core";
@@ -83,7 +83,12 @@ interface SysCalCfg {
   lastCount: number;
   lastError: string | null;
   fingerprint: string | null;
+  /** 连续同步失败次数（成功清零）。达 FAIL_PAUSE 暂停自动跟随，防"崩→指纹未存→再试"死循环。 */
+  failStreak: number;
 }
+
+/** 自动跟随熔断阈值：连续失败到此次数后暂停自动同步（手动同步不受限，成功即恢复）。 */
+const FAIL_PAUSE = 3;
 
 /** v3：所有权绑定、完整源屏障、作业事件开始时提醒。旧指纹作废。 */
 const CFG_VERSION = 3;
@@ -97,7 +102,7 @@ let policyRevision = 0;
 let removePending = false;
 let activeSync: Promise<SystemCalSyncOutcome> | null = null;
 let changedWhileSyncing = false;
-let cfg: SysCalCfg = { enabled: false, stopped: false, lastSyncAt: 0, lastCount: 0, lastError: null, fingerprint: null };
+let cfg: SysCalCfg = { enabled: false, stopped: false, lastSyncAt: 0, lastCount: 0, lastError: null, fingerprint: null, failStreak: 0 };
 let supportedCache: boolean | null = null;
 let syncing = false;
 const listeners = new Set<() => void>();
@@ -126,6 +131,7 @@ async function ensureLoaded(): Promise<void> {
         lastCount: typeof j.lastCount === "number" ? j.lastCount : 0,
         lastError: typeof j.lastError === "string" ? j.lastError : null,
         fingerprint: legacy ? null : typeof j.fingerprint === "string" ? j.fingerprint : null,
+        failStreak: typeof j.failStreak === "number" ? j.failStreak : 0,
       };
     }
     loaded = true;
@@ -420,13 +426,17 @@ function runSync(opts?: { silent?: boolean; enable?: boolean }): Promise<SystemC
       if (revision !== policyRevision || removePending) throw new Error(i18n("state.systemcal.fe90aa1936ae"));
       const fingerprint = fingerprintOf(payload);
       if (opts?.silent && cfg.fingerprint === fingerprint) {
-        cfg = { ...cfg, lastError: null };
+        cfg = { ...cfg, lastError: null, failStreak: 0 };
         await persistCfg();
         return { added: 0, removed: 0, skipped: true };
       }
       const granted = await invokePlugin<boolean>("request_permission");
       if (!granted) throw new Error(i18n("state.systemcal.d2d00f793981"));
       if (revision !== policyRevision || removePending) throw new Error(i18n("state.systemcal.fe90aa1936ae"));
+      // 原生段取证：正式包里 log_debug 落 onethu-debug.log 并镜像 logcat（tag=onethu），
+      // 崩溃死在原生时"最后一行 = 同步开始"即是死区证据
+      void logLine(`[SYSCAL] 原生同步开始 events=${payload.events.length} fp=${fingerprint}`).catch(() => undefined);
+      const t0 = Date.now();
       const r = await invokePlugin<{ added: number; removed: number; warning?: string }>("sync", { payload });
       cfg = {
         ...cfg,
@@ -434,12 +444,24 @@ function runSync(opts?: { silent?: boolean; enable?: boolean }): Promise<SystemC
         stopped: opts?.enable && revision === policyRevision && !removePending ? false : cfg.stopped,
         lastSyncAt: Date.now(), lastCount: payload.events.length,
         lastError: r.warning ?? null, fingerprint,
+        failStreak: 0,
       };
       await persistCfg();
+      autoPausedLogged = false;
+      void logLine(`[SYSCAL] 原生同步完成 +${r.added}/-${r.removed} ${Date.now() - t0}ms`).catch(() => undefined);
       return { added: r.added, removed: r.removed, skipped: false };
     } catch (err) {
-      cfg = { ...cfg, lastError: err instanceof Error ? err.message : String(err) };
+      const streak = (cfg.failStreak ?? 0) + 1;
+      const raw = err instanceof Error ? err.message : String(err);
+      cfg = {
+        ...cfg,
+        lastError: streak >= FAIL_PAUSE && streak - 1 < FAIL_PAUSE
+          ? `${i18n("state.systemcal.0a936b980101", { length: String(streak) })} · ${raw}`
+          : raw,
+        failStreak: streak,
+      };
       if (loaded) await persistCfg().catch(() => undefined);
+      void logLine(`[SYSCAL] 原生同步失败 streak=${streak}: ${raw.slice(0, 160)}`).catch(() => undefined);
       throw err;
     } finally {
       syncing = false;
@@ -505,9 +527,20 @@ export async function removeSystemCalendar(): Promise<void> {
 /* ---------- 自动跟随 ---------- */
 
 let autoTimer: ReturnType<typeof setTimeout> | null = null;
+/** 熔断提示只记一次的闸（手动同步成功后复位，见 runSync 成功路径） */
+let autoPausedLogged = false;
 
 async function autoPush(): Promise<void> {
   if (!cfg.enabled || removePending) return;
+  if (cfg.failStreak >= FAIL_PAUSE) {
+    // 熔断：连续失败说明原生侧有系统性问题（如鸿蒙兼容层 provider 崩溃），继续自动重试
+    // 只会每轮启动都撞一次。手动同步不受限，成功即清零恢复。
+    if (!autoPausedLogged) {
+      autoPausedLogged = true;
+      void logLine(`[SYSCAL] 连续失败 ${cfg.failStreak} 次，自动跟随暂停（手动同步成功后恢复）`).catch(() => undefined);
+    }
+    return;
+  }
   if (syncing) { changedWhileSyncing = true; return; }
   if (!(await systemCalSupported())) return;
   // 数据齐备门槛：学堂快照缺席时**不重建**。快照为 null = 学堂数据还没装载（App 启动后

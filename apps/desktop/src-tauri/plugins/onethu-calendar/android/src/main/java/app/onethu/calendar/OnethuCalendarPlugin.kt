@@ -196,9 +196,13 @@ class OnethuCalendarPlugin(private val activity: android.app.Activity) : Plugin(
       try {
         val result = syncBlocking(args)
         activity.runOnUiThread { invoke.resolve(result) }
-      } catch (ex: Exception) {
-        val message = ex.message ?: "系统日历同步失败"
-        Logger.error(TAG, message, null)
+      } catch (ex: Throwable) {
+        // Throwable 而非 Exception：后台线程上的 Error（如 provider 事务触发的 OOM）若不被
+        // 接住会直接掀翻整个进程（2026-10-26 鸿蒙真机：开自动同步后每轮启动同步进程即死，
+        // 关同步后稳定）。同步失败是可恢复的——指纹未前移，下一轮重试；这里把它转成
+        // 可见错误，用户至少还活着能看到。
+        val message = "${ex.javaClass.simpleName}: ${ex.message}"
+        Logger.error(TAG, "系统日历同步失败 $message", ex)
         activity.runOnUiThread { invoke.reject(message) }
       }
     }
@@ -296,9 +300,10 @@ class OnethuCalendarPlugin(private val activity: android.app.Activity) : Plugin(
         }
         check(binding.edit().clear().commit()) { "清理系统日历绑定失败" }
         activity.runOnUiThread { invoke.resolve(JSObject()) }
-      } catch (ex: Exception) {
-        val message = ex.message ?: "移除系统日历失败"
-        Logger.error(TAG, message, null)
+      } catch (ex: Throwable) {
+        // 同 sync：Error 级失败转可见错误，不掀进程
+        val message = "${ex.javaClass.simpleName}: ${ex.message}"
+        Logger.error(TAG, "移除系统日历失败 $message", ex)
         activity.runOnUiThread { invoke.reject(message) }
       }
     }
