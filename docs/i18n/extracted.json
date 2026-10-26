@@ -100972,5 +100972,161 @@
         "context": "h.title ?? \"作业\""
       }
     ]
+  },
+  {
+    "key": "pages.schedule.31802424217f",
+    "source": "截止日期",
+    "kind": "text",
+    "parameters": [],
+    "locations": [
+      {
+        "file": "apps/desktop/src/pages/Schedule.tsx",
+        "line": 1633,
+        "context": "日程编辑器重复规则控件"
+      }
+    ]
+  },
+  {
+    "key": "pages.schedule.35329267c76a",
+    "source": "结束于",
+    "kind": "text",
+    "parameters": [],
+    "locations": [
+      {
+        "file": "apps/desktop/src/pages/Schedule.tsx",
+        "line": 1627,
+        "context": "日程编辑器重复规则控件"
+      }
+    ]
+  },
+  {
+    "key": "pages.schedule.609cf2fdf6ff",
+    "source": "重复",
+    "kind": "text",
+    "parameters": [],
+    "locations": [
+      {
+        "file": "apps/desktop/src/pages/Schedule.tsx",
+        "line": 1600,
+        "context": "日程编辑器重复规则控件"
+      }
+    ]
+  },
+  {
+    "key": "pages.schedule.68b21af949de",
+    "source": "每月",
+    "kind": "text",
+    "parameters": [],
+    "locations": [
+      {
+        "file": "apps/desktop/src/pages/Schedule.tsx",
+        "line": 1609,
+        "context": "日程编辑器重复规则控件"
+      }
+    ]
+  },
+  {
+    "key": "pages.schedule.85abb11694fe",
+    "source": "每两周",
+    "kind": "text",
+    "parameters": [],
+    "locations": [
+      {
+        "file": "apps/desktop/src/pages/Schedule.tsx",
+        "line": 1608,
+        "context": "日程编辑器重复规则控件"
+      }
+    ]
+  },
+  {
+    "key": "pages.schedule.92845d3b531d",
+    "source": "每周",
+    "kind": "text",
+    "parameters": [],
+    "locations": [
+      {
+        "file": "apps/desktop/src/pages/Schedule.tsx",
+        "line": 1607,
+        "context": "日程编辑器重复规则控件"
+      }
+    ]
+  },
+  {
+    "key": "pages.schedule.94b9ed1021c2",
+    "source": "保存后将按新规则重建系列；原有的截止次数与排除场不再适用",
+    "kind": "text",
+    "parameters": [],
+    "locations": [
+      {
+        "file": "apps/desktop/src/pages/Schedule.tsx",
+        "line": 1670,
+        "context": "日程编辑器重复规则控件"
+      }
+    ]
+  },
+  {
+    "key": "pages.schedule.bf2431e3619d",
+    "source": "永不",
+    "kind": "text",
+    "parameters": [],
+    "locations": [
+      {
+        "file": "apps/desktop/src/pages/Schedule.tsx",
+        "line": 1632,
+        "context": "日程编辑器重复规则控件"
+      }
+    ]
+  },
+  {
+    "key": "pages.schedule.c80254eaafba",
+    "source": "截止日期不能早于开始日期",
+    "kind": "text",
+    "parameters": [],
+    "locations": [
+      {
+        "file": "apps/desktop/src/pages/Schedule.tsx",
+        "line": 958,
+        "context": "日程编辑器重复规则控件"
+      }
+    ]
+  },
+  {
+    "key": "pages.schedule.ebdc3594be5c",
+    "source": "不重复",
+    "kind": "text",
+    "parameters": [],
+    "locations": [
+      {
+        "file": "apps/desktop/src/pages/Schedule.tsx",
+        "line": 1605,
+        "context": "日程编辑器重复规则控件"
+      }
+    ]
+  },
+  {
+    "key": "pages.schedule.eea1694c235b",
+    "source": "每天",
+    "kind": "text",
+    "parameters": [],
+    "locations": [
+      {
+        "file": "apps/desktop/src/pages/Schedule.tsx",
+        "line": 1606,
+        "context": "日程编辑器重复规则控件"
+      }
+    ]
+  },
+  {
+    "key": "pages.schedule.f6ddcc767765",
+    "source": "每周重复至少选择一个星期",
+    "kind": "text",
+    "parameters": [],
+    "locations": [
+      {
+        "file": "apps/desktop/src/pages/Schedule.tsx",
+        "line": 956,
+        "context": "日程编辑器重复规则控件"
+      }
+    ]
   }
 ]
