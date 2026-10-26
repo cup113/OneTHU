@@ -35,6 +35,10 @@ on:
         description: "Android NDK 版本覆盖（留空=28.2.13676358；排查闪退可填 27.1.12297006 等旧版）"
         type: string
         default: ""
+      macos_runner:
+        description: "macOS 构建机标签（留空=macos-latest；arm64 容量不足时可填 macos-15-intel，按 x64 交叉编译 aarch64）"
+        type: string
+        default: ""
       version:
         description: "分叉版本覆盖（形如 0.11.4-1，留空用 tauri.fork.conf.json）。带 release 时必填"
         type: string
@@ -126,8 +130,11 @@ jobs:
         || fromJSON('{"include":[{"os":"macos-latest","args":"--target aarch64-apple-darwin"},{"os":"windows-latest","args":""}]}') }}
     # 自建 runner（自己的 Windows 机）：热 target 目录增量编译，比云上快一个数量级。
     # 标签用 [self-hosted, Windows]（GitHub 给自建 runner 的默认标签）。
+    # macOS 允许用 inputs.macos_runner 临时换构建机：arm64 镜像排队超时（15 分钟拿不到
+    # Runner 会被取消）时可改 macos-15-intel，用 x64 交叉编译 aarch64（下方 rustup 补 target）。
     runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.runner == 'self-hosted')
-      && fromJSON('["self-hosted","Windows"]') || matrix.os }}
+      && fromJSON('["self-hosted","Windows"]')
+      || (matrix.os == 'macos-latest' && inputs.macos_runner != '' && inputs.macos_runner || matrix.os) }}
     # 默认 shell 在 Windows runner 上是 pwsh：多行 run 里前面的命令失败不会中断，
     # step 的退出码只看最后一条命令。实测 run 39979127330：鉴权守卫在 Windows 上
     # 同样断言失败，step 却是绿的，只有 macOS（bash）报红。统一走 bash，三端一致。
@@ -148,6 +155,10 @@ jobs:
           node-version: 22
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
+      # x64 macOS 交叉编译 aarch64 需要显式加 target；arm64 原生机上这一步是空操作
+      - name: Add Apple Silicon target
+        if: matrix.os == 'macos-latest'
+        run: rustup target add aarch64-apple-darwin
       # sccache：跨运行的编译结果缓存（Windows 上依赖编译是主要开销）
       - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: swatinem/rust-cache@v2
