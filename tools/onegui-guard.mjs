@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { fileURLToPath } from "node:url";
 /* ════════════════════════════════════════════════════════════════════════════
  * OneGUI 护栏 —— 唯一风格裁判
  *
@@ -22,7 +23,7 @@
 import { readdirSync, readFileSync, statSync, writeFileSync, existsSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
-const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/[\\/]$/, "");
 const GUI = join(ROOT, "packages/gui");
 const APP = join(ROOT, "apps/desktop/src");
 const BASELINE = join(ROOT, "tools/onegui-baseline.json");

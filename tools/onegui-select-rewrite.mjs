@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { fileURLToPath } from "node:url";
 /* AST 级把 <select className="input|field"> 改成 OneGUI <Select>：
  *  - 只动属性：丢 className（外观交 variant）、丢 style（库组件不接受）、type；
  *  - onChange 由 (e) => …e.target.value… 改成 (value) => …value…（用 AST 取到箭头函数的精确文本再改写）；
@@ -11,7 +12,7 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
-const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/[\\/]$/, "");
 const APP = join(ROOT, "apps/desktop/src");
 const APPLY = process.argv.includes("--apply");
 
