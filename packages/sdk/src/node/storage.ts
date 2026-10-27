@@ -14,11 +14,18 @@ const noFollow = constants.O_NOFOLLOW ?? 0;
 const isMissing = (e: unknown) => (e as NodeJS.ErrnoException)?.code === 'ENOENT';
 async function privateMode(target: string, directory: boolean): Promise<void> {
   if (process.platform !== 'win32') { await chmod(target, directory ? 0o700 : 0o600); return; }
-  // Build a fresh protected DACL: /grant:r alone would leave unrelated explicit
-  // grants intact. The path is an environment value, never executable syntax.
-  const script = `$ErrorActionPreference='Stop'; $sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User; $acl=New-Object System.Security.AccessControl.${directory ? 'DirectorySecurity' : 'FileSecurity'}; $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true,$false); $rule=New-Object System.Security.AccessControl.FileSystemAccessRule($sid,'FullControl','${directory ? 'ContainerInherit,ObjectInherit' : 'None'}','None','Allow'); $acl.AddAccessRule($rule); Set-Acl -LiteralPath $env:ONETHU_PRIVATE_STORAGE_PATH -AclObject $acl`;
-  try { await exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, env: {...process.env, ONETHU_PRIVATE_STORAGE_PATH:target} }); }
-  catch { throw authError('AUTH_STORAGE_ACL_FAILED'); }
+  // icacls edits the DACL only, and /inheritance:r drops every inherited grant
+  // before /grant:r adds the single owner rule. Set-Acl rewrote the whole
+  // security descriptor instead, which needs SeSecurityPrivilege as soon as an
+  // object carries a SACL — an elevated run materialises one, and from then on
+  // every unelevated daemon died here with AUTH_STORAGE_ACL_FAILED before it
+  // could publish its discovery record. Same shape as notifications/storage.mjs.
+  try {
+    const { stdout } = await exec('whoami.exe', ['/user', '/fo', 'csv', '/nh'], { windowsHide: true });
+    const sid = /S-1-5-(?:\d+-)*\d+/.exec(String(stdout))?.[0];
+    if (!sid) throw authError('AUTH_STORAGE_ACL_FAILED');
+    await exec('icacls.exe', [target, '/inheritance:r', '/grant:r', `*${sid}:${directory ? '(OI)(CI)' : ''}F`], { windowsHide: true });
+  } catch { throw authError('AUTH_STORAGE_ACL_FAILED'); }
 }
 async function checkFile(target: string, directory = false): Promise<void> {
   const stat = await lstat(target);

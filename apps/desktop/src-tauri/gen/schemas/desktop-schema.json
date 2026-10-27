@@ -2499,10 +2499,10 @@
           "markdownDescription": "Denies the watch_position command without any pre-configured scope."
         },
         {
-          "description": "允许使用系统日历原生同步：\n查询支持平台、请求日历权限、写入/清理 OneTHU 专属日历事件、移除该日历。\n\n#### This default permission set includes:\n\n- `allow-supported`\n- `allow-request-permission`\n- `allow-sync`\n- `allow-remove-calendar`",
+          "description": "允许使用系统日历原生同步：\n查询支持平台、请求日历权限、写入/清理 OneTHU 专属日历事件、移除该日历、读取同步轨迹。\n\n#### This default permission set includes:\n\n- `allow-supported`\n- `allow-request-permission`\n- `allow-sync`\n- `allow-remove-calendar`\n- `allow-sync-trace`",
           "type": "string",
           "const": "onethu-calendar:default",
-          "markdownDescription": "允许使用系统日历原生同步：\n查询支持平台、请求日历权限、写入/清理 OneTHU 专属日历事件、移除该日历。\n\n#### This default permission set includes:\n\n- `allow-supported`\n- `allow-request-permission`\n- `allow-sync`\n- `allow-remove-calendar`"
+          "markdownDescription": "允许使用系统日历原生同步：\n查询支持平台、请求日历权限、写入/清理 OneTHU 专属日历事件、移除该日历、读取同步轨迹。\n\n#### This default permission set includes:\n\n- `allow-supported`\n- `allow-request-permission`\n- `allow-sync`\n- `allow-remove-calendar`\n- `allow-sync-trace`"
         },
         {
           "description": "Enables the remove_calendar command without any pre-configured scope.",
@@ -2529,6 +2529,12 @@
           "markdownDescription": "Enables the sync command without any pre-configured scope."
         },
         {
+          "description": "Enables the sync_trace command without any pre-configured scope.",
+          "type": "string",
+          "const": "onethu-calendar:allow-sync-trace",
+          "markdownDescription": "Enables the sync_trace command without any pre-configured scope."
+        },
+        {
           "description": "Denies the remove_calendar command without any pre-configured scope.",
           "type": "string",
           "const": "onethu-calendar:deny-remove-calendar",
@@ -2551,6 +2557,12 @@
           "type": "string",
           "const": "onethu-calendar:deny-sync",
           "markdownDescription": "Denies the sync command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sync_trace command without any pre-configured scope.",
+          "type": "string",
+          "const": "onethu-calendar:deny-sync-trace",
+          "markdownDescription": "Denies the sync_trace command without any pre-configured scope."
         },
         {
           "description": "OneTHU Android 系统桥：\n查询系统桥可用性（下载转存 / intent 深链由主 crate 内部调用，不经 IPC）。\n\n#### This default permission set includes:\n\n- `allow-mobile-supported`\n- `allow-mobile-exit`",

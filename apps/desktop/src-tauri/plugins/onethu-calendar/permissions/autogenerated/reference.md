@@ -1,7 +1,7 @@
 ## Default Permission
 
 允许使用系统日历原生同步：
-查询支持平台、请求日历权限、写入/清理 OneTHU 专属日历事件、移除该日历。
+查询支持平台、请求日历权限、写入/清理 OneTHU 专属日历事件、移除该日历、读取同步轨迹。
 
 #### This default permission set includes the following:
 
@@ -9,6 +9,7 @@
 - `allow-request-permission`
 - `allow-sync`
 - `allow-remove-calendar`
+- `allow-sync-trace`
 
 ## Permission Table
 
@@ -119,6 +120,32 @@ Enables the sync command without any pre-configured scope.
 <td>
 
 Denies the sync command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`onethu-calendar:allow-sync-trace`
+
+</td>
+<td>
+
+Enables the sync_trace command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`onethu-calendar:deny-sync-trace`
+
+</td>
+<td>
+
+Denies the sync_trace command without any pre-configured scope.
 
 </td>
 </tr>
