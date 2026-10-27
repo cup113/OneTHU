@@ -398,7 +398,7 @@ jobs:
             --version "$VERSION" \
             --out release-out/latest.json \
             --releasedAt "$(date -u +%F)" \
-            --notes "分叉 $VERSION：修复 Windows 上本机 CLI 服务起不来导致的「本机服务未就绪」——私有目录 ACL 改由 icacls 写入（不再依赖 PowerShell 的 Set-Acl），管理员身份写出的发现文件也不再被所有权检查拒绝；同时补齐系统日历同步轨迹的诊断权限。保留分叉的托盘/悬浮球保活、系统日历差异同步与自定义日程重复规则，更新源仍指向 cup113/OneTHU。"
+            --notes "分叉 $VERSION：基线跟到上游 0.11.4-fix-1——会话恢复期间不再锁死登录，daemon 启动失败会把真实错误码写进 daemon-startup.log，私有目录 ACL 改为显式 .NET 写入并带超时与失败阶段；分叉保留凭据文件属主接受 Administrators 与系统日历同步轨迹的诊断权限，以及托盘/悬浮球保活、系统日历差异同步与自定义日程重复规则。更新源仍指向 cup113/OneTHU。"
       - name: Write release notes
         env:
           VERSION: ${{ inputs.version }}
