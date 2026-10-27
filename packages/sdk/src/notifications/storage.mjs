@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { constants } from 'node:fs';
+import { constants, existsSync } from 'node:fs';
 import { chmod, lstat, mkdir, open, readdir, rename, unlink } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -8,6 +8,16 @@ import { randomBytes } from 'node:crypto';
 const exec = promisify(execFile);
 const noFollow = constants.O_NOFOLLOW ?? 0;
 const missing = error => error?.code === 'ENOENT';
+/** Windows 自带 whoami/icacls 在 System32，但 PATH 会把它们劫持掉——Git 的 coreutils
+ * 也带一个 whoami.exe，它把 `/user` 当多余参数（Windows CI 实测：
+ * "whoami: extra operand '/user'"），另一份 icacls 则可能根本不存在。按绝对路径解析，
+ * 找不到才退回裸名字。 */
+const systemTool = name => {
+  const root = process.env.SystemRoot || process.env.windir;
+  if (!root) return name;
+  const full = path.join(root, 'System32', name);
+  return existsSync(full) ? full : name;
+};
 export class NotificationError extends Error {
   constructor(code, message = code) { super(message); this.code = code; }
 }
@@ -24,10 +34,10 @@ async function assertPath(target, allowMissing = false) {
 }
 async function privateMode(target, directory) {
   if (process.platform !== 'win32') { await chmod(target, directory ? 0o700 : 0o600); return; }
-  const { stdout } = await exec('whoami.exe', ['/user', '/fo', 'csv', '/nh'], { windowsHide: true });
+  const { stdout } = await exec(systemTool('whoami.exe'), ['/user', '/fo', 'csv', '/nh'], { windowsHide: true });
   const sid = /S-1-5-(?:\d+-)*\d+/.exec(stdout)?.[0];
   if (!sid) fail('NOTIFICATION_STORAGE_ACL_FAILED');
-  await exec('icacls.exe', [target, '/inheritance:r', '/grant:r', `*${sid}:${directory ? '(OI)(CI)' : ''}F`], { windowsHide: true });
+  await exec(systemTool('icacls.exe'), [target, '/inheritance:r', '/grant:r', `*${sid}:${directory ? '(OI)(CI)' : ''}F`], { windowsHide: true });
 }
 async function checkOwned(target, directory) {
   await assertPath(target);

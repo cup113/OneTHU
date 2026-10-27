@@ -14,8 +14,6 @@ const snapshot={username:'90000001',fingerprint:'c'.repeat(32),cookiesJson:JSON.
 ]),savedAt:1};
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const deadline=ms=>new Promise((_,reject)=>{setTimeout(()=>reject(Error('startup fixture timeout')),ms).unref();});
-// TEMP-DIAG (revert before release): let the daemon report the raw reason.
-process.env.ONETHU_DEBUG_SDK_ERROR='1';
 async function start(t){
   const dir=await mkdtemp(path.join(tmpdir(),'onethu-held-startup-'));
   await writeFile(path.join(dir,'session.json'),JSON.stringify({version:1,epoch:4,explicitLogout:false,device:{fingerprint:snapshot.fingerprint,account:snapshot.username},session:snapshot}),{mode:0o600});
@@ -29,7 +27,7 @@ async function start(t){
   // Windows CI 上 daemon 首次初始化存储要经 PowerShell 写 DACL（实测单次可达 2s+），
   // 2s 的客户端超时会让 desktop.logout/exportSession 直接报 DAEMON_REQUEST_TIMEOUT。
   const client=new DaemonClient(JSON.parse(await readFile(path.join(dir,'daemon-access.json'),'utf8')),15000);
-  return {child,client,dir,stderr:()=>stderr};
+  return {child,client,dir};
 }
 test('desktop exports its durable snapshot while the daemon startup network probe is hanging',{timeout:60000},async t=>{
   const f=await start(t),s=await f.client.call('desktop.exportSession');
@@ -45,9 +43,7 @@ test('explicit desktop logout interrupts startup and a late response cannot rest
 test('a verified explicit handoff supersedes the hanging startup probe without waiting for it',{timeout:60000},async t=>{
   const f=await start(t),s=await f.client.call('desktop.status');
   const next={...snapshot,fingerprint:'d'.repeat(32)};
-  let adopted;
-  try { adopted=await f.client.call('desktop.adoptSession',{snapshot:next,expectedEpoch:s.epoch,reason:'login'}); }
-  catch(error){ t.diagnostic('daemon stderr: '+(f.stderr()||'<empty>')); throw error; }
+  const adopted=await f.client.call('desktop.adoptSession',{snapshot:next,expectedEpoch:s.epoch,reason:'login'});
   assert.equal(adopted.session.state,'ready');f.child.send('release');await delay(50);
   const after=await f.client.call('desktop.exportSession');assert.equal(after.snapshot.fingerprint,next.fingerprint);assert.equal(after.session.state,'ready');
 });

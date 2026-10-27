@@ -23,8 +23,6 @@ export function sdkError(error) {
   };
   // SDK already projects external errors. This adapter exposes stable codes,
   // rather than a network response body or configuration values.
-  // TEMP-DIAG (revert before release): surface the reason behind unknown codes.
-  if (process.env.ONETHU_DEBUG_SDK_ERROR) console.error('SDK_ERROR_RAW=' + message.slice(0, 200));
   return new CliError(code,rainHints[code]??code.replace(/_/g,' '), /REQUIRED|CONFIRMATION|INVALID|NOT_FOUND|UNKNOWN_OPERATION/.test(code)?2:1);
 }
 export class StandaloneClient {
