@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 /**
  * 白板/OH 接线类守栏的**共享测试环境**（2026-10-15，oh-wire）：
  *   · 仓库自带的 DOM/存储替身（tools/dom-stub.mjs）+ hash/事件总线/观察者替身；
@@ -33,7 +34,7 @@ globalThis.ResizeObserver = class { observe() {} disconnect() {} unobserve() {} 
    模块图填充；校园客户端同理（真身 dist 是无后缀相对导入 + CJS 具名导出）。 */
 {
   const { register } = await import("node:module");
-  const REPO = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+  const REPO = fileURLToPath(new URL("..", import.meta.url)).replace(/[\\/]$/, "");
   const loader = `
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { createRequire } from "node:module";

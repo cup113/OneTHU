@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 /**
  * PDF 预览渲染通道护栏（2026-09-21 两次真机事故后定稿）。
  *
@@ -77,7 +78,7 @@ assert.ok(fpSrc.includes("isAndroidNavigator(") && fpSrc.includes("isWindowsNavi
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
-const SRC_ROOT = new URL("../apps/desktop/src", import.meta.url).pathname;
+const SRC_ROOT = fileURLToPath(new URL("../apps/desktop/src", import.meta.url));
 const FAMILY_PATTERNS = [
   // 只拦「判 Android」的 UA 用法；iPhone|iPad 判定不受安卓 UA 伪装影响，允许保留
   [/\/[^\n/]*[Aa]ndroid[^\n/]*\/[a-z]*\.test\(\s*navigator\.userAgent\s*\)/, "UA 正则判安卓"],

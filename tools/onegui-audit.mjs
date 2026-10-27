@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { fileURLToPath } from "node:url";
 /* ════════════════════════════════════════════════════════════════════════════
  * OneGUI 全量审计 —— 找出「一切不是 OneGUI 或其派生的可见样式」
  *
@@ -21,7 +22,7 @@
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
-const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/[\\/]$/, "");
 const APP = join(ROOT, "apps/desktop/src");
 const OUT = join(ROOT, "docs/onegui/04-legacy-ledger.md");
 const PRINT_ONLY = process.argv.includes("--print");
