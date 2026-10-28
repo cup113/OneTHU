@@ -147,6 +147,26 @@ await test("empty bootstrap and long injected business pages do not trigger retr
   }
 });
 
+await test("a short wengine shell that renders text is an answer, not a cookie handshake", async () => {
+  // 「您没有执行当前操作的权限」壳页：同样短、同样带 __vpn_* 变量，但它渲染了文案。
+  // 去舞一次 /wengine-vpn/cookie 换不来页面——只会白烧一次请求，还让诊断把它记成
+  // 「interstitial=true」，把排查引向错误的会话方向（2026-10-28 实录）。
+  for (const [body, expected] of [
+    [`${guide()}<body><p class="infoo">您没有执行当前操作的权限</p></body></html>`, 0],
+    [`${guide()}<body><p>系统繁忙，请稍后再试</p></body></html>`, 0],
+    [guide("learn.tsinghua.edu.cn"), 1],
+  ]) {
+    let pages = 0, cookieCalls = 0;
+    const c = makeClient(async url => {
+      if (new URL(url).pathname === "/wengine-vpn/cookie") { cookieCalls++; return response("JSESSIONID=fixture-replay"); }
+      pages++; return response(body);
+    });
+    await c.text(LEARN);
+    assert.equal(pages, expected ? 2 : 1);
+    assert.equal(cookieCalls, expected);
+  }
+});
+
 await test("strict text status validation preserves legacy behavior and keeps bodies out of errors", async () => {
   for (const status of [403, 429, 502]) {
     let logins = 0;

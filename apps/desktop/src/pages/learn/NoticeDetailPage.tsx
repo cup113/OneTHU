@@ -233,7 +233,11 @@ export function NoticeDetailPage() {
         ) : null}
       </Card>
 
-      {n.attachmentName || att ? (
+      {/* 附件区只在**确有可下载地址**（或解析失败需要重试）时出现：列表里的 fjmc 名字
+          不算证据——站点会给没有文件的通知也带一个名字，甚至渲染出末段为空的下载链接
+          （真机 2026-10-28：地址恒 404）。解析成功但没拿到地址 → 这块根本不渲染，
+          而不是摆一个点了必然失败的「预览」。 */}
+      {((n.attachmentName && attState !== "ok") || att) ? (
         <Card className="detail-sec">
           <div className="detail-sec-head">{i18n("pages.learn.noticedetailpage.c7225dbf105e")}</div>
           {attState === "loading" ? <div className="detail-meta">{i18n("pages.learn.noticedetailpage.39d0d9a70496")}</div> : null}
@@ -244,19 +248,12 @@ export function NoticeDetailPage() {
               <Btn variant="ghost" onClick={retryAtt}>{i18n("pages.learn.noticedetailpage.b8784c8dd563")}</Btn>
             </div>
           ) : null}
-          {attState === "ok" ? (
-            att ? (
-              <div className="kv kv-wide" data-vault-catch={vaultCatchAttachment({ kind: "learn", name: att.name || n.attachmentName || i18n("pages.learn.noticedetailpage.5f1b405cf06f"), url: att.downloadUrl, label: i18n("pages.learn.noticedetailpage.5f1b405cf06f") })}>
-                <span>{att.name || n.attachmentName}{att.size ? `（${att.size}）` : ""}</span>
-                <Btn variant="ghost" onClick={() => openFilePreview({ name: att.name || n.attachmentName || i18n("pages.learn.noticedetailpage.5f1b405cf06f"), url: att.downloadUrl })}>{i18n("pages.learn.noticedetailpage.13d61fea9f17")}</Btn>
-                <Btn variant="ghost" disabled={downloading} onClick={() => void doDownload(att)}><IconDownload width={14} height={14} />{downloading ? i18n("pages.learn.noticedetailpage.bcc2333dc631") : i18n("pages.learn.noticedetailpage.4673a2306165")}</Btn>
-              </div>
-            ) : (
-              <div className="kv kv-wide">
-                <span>{n.attachmentName}</span>
-                <span className="chip chip-gray">{i18n("pages.learn.noticedetailpage.bf44c9de16e4")}</span>
-              </div>
-            )
+          {att ? (
+            <div className="kv kv-wide" data-vault-catch={vaultCatchAttachment({ kind: "learn", name: att.name || n.attachmentName || i18n("pages.learn.noticedetailpage.5f1b405cf06f"), url: att.downloadUrl, label: i18n("pages.learn.noticedetailpage.5f1b405cf06f") })}>
+              <span>{att.name || n.attachmentName}{att.size ? `（${att.size}）` : ""}</span>
+              <Btn variant="ghost" onClick={() => openFilePreview({ name: att.name || n.attachmentName || i18n("pages.learn.noticedetailpage.5f1b405cf06f"), url: att.downloadUrl })}>{i18n("pages.learn.noticedetailpage.13d61fea9f17")}</Btn>
+              <Btn variant="ghost" disabled={downloading} onClick={() => void doDownload(att)}><IconDownload width={14} height={14} />{downloading ? i18n("pages.learn.noticedetailpage.bcc2333dc631") : i18n("pages.learn.noticedetailpage.4673a2306165")}</Btn>
+            </div>
           ) : null}
         </Card>
       ) : null}
