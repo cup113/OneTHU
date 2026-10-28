@@ -106,6 +106,34 @@ export interface AttachmentNameInput {
   downloadUrl?: string;
 }
 
+/**
+ * 附件地址是否真的指向一个**文件**。
+ *
+ * 用途：把站点渲染出来但根本没有文件的锚点挡在解析层（不产出附件行，就不会有
+ * 一个「点了必然失败」的预览按钮）。
+ *
+ * 真机依据（2026-10-28）：通知详情页给出的附件地址是
+ *   …/b/wlxt/kcgg/wlkc_ggb/student/kcggFjxz/{wlkcid}/{32位id}/
+ * **路径末段为空**（以 `/` 结尾），请求恒 404；随后预览器把 404 的 HTML 错误页
+ * 当成登录墙，用户看到「登录状态已失效，请重新登录后再预览」——而同一秒
+ * learn 的列表接口全是 200。learn 的下载端点一律是
+ * `downloadFile?wjid=…` / `kcggFjxz?wlkcid=…` 这种「端点 + 查询参数」形态，
+ * 没有一个以 `/` 收尾，所以「路径以 / 结尾」就是「没有文件名」的可靠信号。
+ */
+export function isDownloadableAttachmentUrl(url: string): boolean {
+  const raw = String(url ?? "").trim();
+  if (!raw) return false;
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+    // 末段为空（目录形态）：站点没有给出文件名 → 不是可下载文件
+    if (u.pathname.endsWith("/")) return false;
+    return u.pathname.replace(/^\/+/, "").length > 0;
+  } catch {
+    return false;
+  }
+}
+
 /** 从附件锚点推导落盘文件名；推不出唯一真名时返回 ""（调用方走 id 兜底 + Content-Type 后缀）。 */
 export function learnAttachmentName(input: AttachmentNameInput): string {
   const attrs: Record<string, string> = {};

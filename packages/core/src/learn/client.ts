@@ -35,7 +35,7 @@ interface LearnJson {
 
 import { decodeHtmlEntities } from "../info/htmltext.js";
 import { parseLearnTime } from "./time.js";
-import { learnAttachmentName } from "./attachmentName.js";
+import { isDownloadableAttachmentUrl, learnAttachmentName } from "./attachmentName.js";
 
 /** 文本字段实体解码：全量命名/数值实体（mdash/ndash/引号/希腊字母…），
  *  并对残留实体再收一轮（站点偶发双重转义 &amp;mdash; → &mdash; → —）。
@@ -784,7 +784,12 @@ export class LearnClient {
   }
 
   async #readPage(url: string, init: RequestInit = {}): Promise<string> {
-    const body = await this.#readText(url, init);
+    let body = await this.#readText(url, init);
+    // webvpn 取票引导页是**瞬时**的：HttpClient 在 text() 里已试过一次 cookie 引导，
+    // 仍可能被并发或慢握手错过（真机 2026-10-28：作业详情页拿到 2556 字节引导页 → 附件区
+    // 报「暂时未返回可用数据」，而同一批请求里另一条已拿到 200）。这里重放一次，
+    // 仍拿到引导页才按服务不可用上报——引导页不是会话死亡的证据，但也不该让用户白等。
+    if (classifyLearnPage(body) === "webvpn-guide") body = await this.#readText(url, init);
     this.#checkReadPage(body);
     if (!body.trim()) throw new LearnResponseError("empty-page");
     return body;
@@ -1140,6 +1145,9 @@ export class LearnClient {
       // 页面经 webvpn 取回时 href 可能已是 `/https/<hex>/…` 包装形态：交给 learnAbsoluteUrl
       // 判断（再拼一次 LEARN_PREFIX 就是双重包装 → 404，真机踩过）
       const downloadUrl = urls.learnAbsoluteUrl(dl ?? href);
+      // 地址没有文件名（末段为空）＝ 站点渲染了一个不存在的附件链接，实测恒 404。
+      // 产出它只会给用户一个「点了必然失败」的预览按钮（2026-10-28 用户实录）。
+      if (!isDownloadableAttachmentUrl(downloadUrl)) continue;
       const size = decodeText(/<span[^>]*class="[^"]*color[^"]*"[^>]*>([^<]*)<\/span>/i.exec(block)?.[1] ?? "").trim();
       if (!attachments.some(item => item.downloadUrl === downloadUrl)) attachments.push({ id, name, downloadUrl, size: size || undefined });
     }
@@ -1165,6 +1173,14 @@ export class LearnClient {
       }
     }
     return html.slice(openIdx, Math.min(html.length, openIdx + 8000));
+  }
+
+  /** 通知详情页里的**附件区块**（`div.list.fujian` 或 `div#attachment`）。
+   *  与作业侧同因：整页扫描会把页头/页脚里带 wjid 的链接也当成附件，凭空长出一行
+   *  「预览」；这里只认附件区块，找不到（老页面结构）才由调用方退回整页。 */
+  #attachmentBlock(html: string): string | null {
+    const m = /<div\b[^>]*(?:id=["']attachment["']|class=["'][^"']*\bfujian\b[^"']*["'])[^>]*>/i.exec(html);
+    return m ? this.#fujianBlockContent(html, m.index) : null;
   }
 
   /** 作业详情页（viewCj HTML）附件解析 —— thu-learn-lib parseHomeworkAtUrl 等价。
@@ -1310,7 +1326,8 @@ export class LearnClient {
     await this.#ensureCsrfReady();
     this.#requireCsrf();
     const html = await this.#withRelogin(() => this.#readPage(this.#withCsrf(urls.LEARN_NOTIFICATION_DETAIL(courseId, notificationId))));
-    const attachments = this.#parseAttachmentAnchors(html);
+    // 只看附件区块（同作业侧的教训：整页扫描会混进页头/页脚的导航链接）
+    const attachments = this.#parseAttachmentAnchors(this.#attachmentBlock(html) ?? html);
     // fjmc in the notification list is the original filename, including its
     // extension. Only use this single-file field for an unambiguous attachment.
     if (attachments.length === 1 && !attachments[0]!.name && attachmentName?.trim()) {

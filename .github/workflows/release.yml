@@ -228,6 +228,8 @@ jobs:
         run: |
           node --import ./tools/ts-resolve-register.mjs tools/http-wengine-bootstrap-test.mjs
           node --import ./tools/ts-resolve-register.mjs tools/learn-response-recovery-test.mjs
+          node --import ./tools/ts-resolve-register.mjs tools/learn-attachment-url-test.mjs
+          node --import ./tools/ts-resolve-register.mjs tools/file-preview-wall-test.mjs
           node tools/wallpaper-sync-test.mjs
           node tools/personal-cloud-target-state-test.mjs
       - name: Check update reminders and news language

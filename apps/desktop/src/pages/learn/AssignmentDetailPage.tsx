@@ -182,6 +182,10 @@ export function AssignmentDetailPage({ courseId: courseIdProp, itemId: itemIdPro
       ]
     : [];
   const attFound = attGroups.filter((g) => g.a);
+  /* 「我的提交正文」与四类附件同卡展示：先算好，用来决定这张卡要不要出现——
+     解析成功却既无附件又无正文时整块不渲染（此前会留一个只有「附件」标题的空卡）。 */
+  const submittedHtml = page?.submittedContent ?? "";
+  const submittedHasBody = submittedHtml.replace(/<[^>]*>/g, "").replace(/&nbsp;|&#160;/g, " ").trim().length > 0;
 
   /** Quill 空内容判定：产物是 "<p><br></p>" 之类，纯 trim 不够（learnX removeTags 同源） */
   const richEmpty = (html: string): boolean =>
@@ -342,7 +346,7 @@ export function AssignmentDetailPage({ courseId: courseIdProp, itemId: itemIdPro
         </Card>
       ) : null}
 
-      {(pageState !== "idle") || attFound.length ? (
+      {pageState === "loading" || pageState === "error" || attFound.length > 0 || submittedHasBody ? (
         <Card className="detail-sec">
           <div className="detail-sec-head">{i18n("pages.learn.assignmentdetailpage.c7225dbf105e")}</div>
           {pageState === "loading" ? <div className="detail-meta">{i18n("pages.learn.assignmentdetailpage.39d0d9a70496")}</div> : null}
@@ -353,21 +357,13 @@ export function AssignmentDetailPage({ courseId: courseIdProp, itemId: itemIdPro
               <Btn variant="ghost" onClick={retryPage}>{i18n("pages.learn.assignmentdetailpage.b8784c8dd563")}</Btn>
             </div>
           ) : null}
-          {(() => {
-            const c = page?.submittedContent ?? "";
-            const hasBody = c.replace(/<[^>]*>/g, "").replace(/&nbsp;|&#160;/g, " ").trim().length > 0;
-            if (hasBody) {
-              return (
-                /* detail-sec 卡片左右 padding 为 0，行距由 .kv 自带——预览块须自带同样的 16px 边距 */
-                <div style={{ padding: "4px 16px 0", marginBottom: 6 }}>
-                  <div className="detail-meta" style={{ fontWeight: 600, marginBottom: 4 }}>{i18n("pages.learn.assignmentdetailpage.b18ae752b8e6")}</div>
-                  <RichContent html={c} />
-                </div>
-              );
-            }
-            /* 空态静默：未提交（或服务器本就无正文）时不渲染预览块 */
-            return null;
-          })()}
+          {submittedHasBody ? (
+            /* detail-sec 卡片左右 padding 为 0，行距由 .kv 自带——预览块须自带同样的 16px 边距 */
+            <div style={{ padding: "4px 16px 0", marginBottom: 6 }}>
+              <div className="detail-meta" style={{ fontWeight: 600, marginBottom: 4 }}>{i18n("pages.learn.assignmentdetailpage.b18ae752b8e6")}</div>
+              <RichContent html={submittedHtml} />
+            </div>
+          ) : null}
           {attFound.map(({ label, a }) => {
             const key = a!.id || a!.downloadUrl;
             return (
