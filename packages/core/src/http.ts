@@ -254,6 +254,21 @@ export interface HttpClientOptions {
 export const DEFAULT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.88 Safari/537.36";
 
+/** 页面上用户真正看得到的文字（剥注释、脚本、样式与标签）。
+ *  wengine 把同一套 `__vpn_*` 变量注入**所有**经它代理的页面，所以「带变量」不能
+ *  区分「JS 桥空壳」与「渲染了文案的答复页」——长度都在 4000 以内时，只有可见文字
+ *  能分开它们（2026-10-28 实录：2556 字节的「您没有执行当前操作的权限」壳页被当成
+ *  取票引导页，作业详情整页报「暂时未返回可用数据」）。 */
+export function visiblePageText(html: string): string {
+  return html
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(?:script|style|noscript)\b[^>]*>[\s\S]*?<\/(?:script|style|noscript)>/gi, " ")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;|&#160;/gi, " ")
+    .replace(/&[a-z]+;|&#\d+;/gi, " ")
+    .replace(/\s+/g, "");
+}
+
 export class HttpClient {
   readonly jar: CookieJar;
   #fetch: FetchLike;
@@ -416,14 +431,18 @@ export class HttpClient {
     return this.#cookieHeaderFor(targetUrl);
   }
 
-  /** 真·wengine 引导页（interstitial）：vars 齐全 + 页面极短 + 无任何业务/登录文案。
-   *  注意 wengine 会把 __vpn_* JS 注入所有被代理页面，长页面带 vars ≠ 引导页。 */
+  /** 真·wengine 引导页（interstitial）：vars 齐全 + 页面极短 + **没有任何可见文字**。
+   *  注意 wengine 会把 __vpn_* JS 注入所有被代理页面，长页面带 vars ≠ 引导页；
+   *  短页面带 vars 也不一定是——学校的错误壳页同样带 vars，但它渲染了文案
+   *  （「您没有执行当前操作的权限」）。引导页是纯 JS 桥空壳，看得见的只有一个空
+   *  body；去舞一次 `/wengine-vpn/cookie` 也换不来页面，只会白烧一次请求。 */
   wengineInterstitial(page: string): boolean {
     return (
       page.length < 4000 &&
       page.includes("__vpn_hostname_data") &&
       page.includes("__vpn_app_hostname_data") &&
-      !/电子身份服务系统|用户登陆超时|casLogin|登录成功|j_acegi/i.test(page)
+      !/电子身份服务系统|用户登陆超时|casLogin|登录成功|j_acegi/i.test(page) &&
+      visiblePageText(page).length === 0
     );
   }
 

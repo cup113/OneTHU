@@ -2,7 +2,7 @@
  * 网络学堂客户端（本科生视角）。
  * 登录 = CAS ticket 漫游 → 课程列表页抓 _csrf；接口失效自动重登录（retryAfterLogin）。
  */
-import { AuthRequiredError, HttpClient } from "../http.js";
+import { AuthRequiredError, HttpClient, visiblePageText } from "../http.js";
 import { encryptPassword } from "../crypto/sm2.js";
 import * as urls from "./urls.js";
 import { collectLearnOffsetPages, collectLearnSizePages, readLearnTotal } from "./pagination.js";
@@ -473,6 +473,10 @@ function extractLearnCsrf(html: string): { token: string; via: string } | null {
   return null;
 }
 
+/** 学校对「这条路径你没资格走」的答复（wengine 壳页把 title 与提示文字都渲染出来）。
+ *  只认短页上的明确拒绝文案——长业务页正文里出现「权限」二字是常事，不能据此判死。 */
+const LEARN_DENIED_RE = /没有(?:执行当前操作的)?权限|无(?:访问|操作|下载|查看)权限|拒绝访问|access\s*denied|forbidden/i;
+
 /** 回页种类（只进诊断，不进界面）：分清「登录状态死了」与「页面换了形状」——
  *  两者的处置完全不同，以前都报同一句话，排查只能靠猜。 */
 function classifyLearnPage(html: string): string {
@@ -487,6 +491,11 @@ function classifyLearnPage(html: string): string {
   if (/<title>\s*(?:Apache Tomcat|Error report|HTTP Status)|<h1[^>]*>\s*HTTP Status\s+[45]\d\d/i.test(markup)) return "server-error-page";
   if (!businessMarkup && /<(?:a|form|meta)\b[^>]*(?:\/do\/off\/ui\/auth\/login\/|oauth\.tsinghua\.edu\.cn\/thu-oauth\/auth)/i.test(markup)) return "id-login-link";
   const learningNavigation = /\/f\/wlxt\/|name=["']_csrf["']/i.test(markup);
+  // wengine 的「您没有执行当前操作的权限」壳页：短、含 wengine 变量，但**有可见文案**。
+  // 它是学校对这条路径的业务拒绝，不是取票引导页——已批改/已过期的作业，其 tijiao
+  // 恒回 2556 字节本页，而同批 viewCj 回 71826 字节正常页（2026-10-28 实录）。判成
+  // webvpn-guide 会让作业详情整页报「暂时未返回可用数据」，还白舞一次 cookie。
+  if (html.length < 4000 && LEARN_DENIED_RE.test(visiblePageText(markup))) return "learn-denied";
   if (html.length < 4000 && html.includes("__vpn_hostname_data") && html.includes("__vpn_app_hostname_data") && !businessMarkup && !learningNavigation) return "webvpn-guide";
   if (extractLearnCsrf(html)) return /__vpn_|wengine/i.test(html) ? "learn-page-proxied" : "learn-page";
   return html.trim().length === 0 ? "empty" : "unknown";
@@ -677,7 +686,7 @@ export class LearnClient {
       const html = await this.#http.text(urls.LEARN_COURSE_LIST_PAGE(), {}, { validateStatus: true });
       const kind = classifyLearnPage(html);
       this.lastDebug = `COURSE-PAGE kind=${kind} len=${html.length}`;
-      const hit = isLearnAuthPage(kind) || kind === "webvpn-guide" || kind === "server-error-page"
+      const hit = isLearnAuthPage(kind) || kind === "webvpn-guide" || kind === "server-error-page" || kind === "learn-denied"
         ? null : extractLearnCsrf(html);
       this.lastCsrfDebug = hit
         ? `ok via=${hit.via} len=${html.length}`
@@ -780,7 +789,9 @@ export class LearnClient {
     if (isLearnAuthPage(kind)) throw new SessionExpiredError();
     // HttpClient has already attempted the WebVPN cookie bootstrap. A remaining
     // gateway/server page is service failure, not evidence that credentials died.
-    if (kind === "webvpn-guide" || kind === "server-error-page") throw new LearnResponseError(kind);
+    // `learn-denied` 是学校明确拒绝这条路径（无权限页），也不能当空页解析——
+    // 否则会静默返回「没有附件」这一假事实。归因留给调用方。
+    if (kind === "webvpn-guide" || kind === "server-error-page" || kind === "learn-denied") throw new LearnResponseError(kind);
   }
 
   async #readPage(url: string, init: RequestInit = {}): Promise<string> {
@@ -1239,15 +1250,28 @@ export class LearnClient {
         this.#readPage(this.#withCsrf(urls.LEARN_HOMEWORK_SUBMIT_PAGE(courseId, studentHomeworkId))),
         this.#readPage(this.#withCsrf(urls.LEARN_HOMEWORK_PAGE(courseId, studentHomeworkId))),
       ]);
-      const failedIndex = result.findIndex((r) => r.status === "rejected");
-      const failed = result[failedIndex];
-      if (failed?.status === "rejected") {
-        if (failed.reason instanceof Error) Object.assign(failed.reason, { stage: failedIndex === 0 ? "homework-submit-page" : "homework-grade-page" });
-        throw failed.reason;
+      const [submitResult, gradeResult] = result;
+      if (gradeResult?.status === "rejected") {
+        if (gradeResult.reason instanceof Error) Object.assign(gradeResult.reason, { stage: "homework-grade-page" });
+        throw gradeResult.reason;
       }
-      const pages = result.map((r) => r.status === "fulfilled" ? r.value : "") as [string, string];
-      if (!pages.some(p => p.trim())) throw new LearnResponseError("empty-detail");
-      return pages;
+      // 提交页被判「您没有执行当前操作的权限」＝ 这篇作业已批阅或已过提交期，是**状态**
+      // 而非故障：学校对不开提交的作业用一张 2556 字节拒绝页答复 GET，而同批 viewCj
+      // 正常返回成绩页（2026-10-28 实录）。正文与四类附件全在成绩页里，跟提交权限毫无
+      // 关系——绝不因为拿不到提交表单就让整个详情报「暂时未返回可用数据」。传输层故障
+      // （取票引导页、服务器错误页）仍是未知状态，照旧上报，也照旧可重试。
+      let submitPage = "";
+      if (submitResult?.status === "rejected") {
+        const denied = submitResult.reason instanceof LearnResponseError && submitResult.reason.kind === "learn-denied";
+        if (!denied) {
+          if (submitResult.reason instanceof Error) Object.assign(submitResult.reason, { stage: "homework-submit-page" });
+          throw submitResult.reason;
+        }
+        this.#http.debug?.("LEARN-HW 提交页被拒（该作业无提交权限），改用成绩页");
+      } else submitPage = submitResult?.value ?? "";
+      const page = gradeResult?.value ?? "";
+      if (!submitPage.trim() && !page.trim()) throw new LearnResponseError("empty-detail");
+      return [submitPage, page] as [string, string];
     });
     const hasForm = (h: string): boolean =>
       /\btjzy\b/i.test(h) ||
