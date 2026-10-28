@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>日程 · 全天事件 UI Demo（方案 A：列对齐 banner 行）</title>
+<!-- ═══════════════════════════════════════════════════════════════════════
+  OneTHU 日程页 · 全天事件显示方案 Demo
+    · 模式「方案 A」：all-day banner 行落在星期表头正下方，与 7 列网格严格对齐；
+      多天事件连续横铺、每日重复合并为整周条、单列溢出折叠为「+N」弹层。
+    · 模式「现状」：复刻当前 Schedule.tsx 的芯片行（无 CSS、无日期、slice(0,8) 截断、
+      空态误报），供并排对比。
+  视觉令牌取自 packages/gui/src/tokens/{reference,semantic}.css 的真实值；
+  课块色板 = lib/courseColor.ts COURSE_PALETTE / SRC_COLOR。
+  ═══════════════════════════════════════════════════════════════════════ -->
+<style>
+  :root {
+    --surface-1: #ffffff;
+    --surface-3: #f7f7f5;
+    --surface-4: #f0f0ee;
+    --content-1: #212120;
+    --content-2: #50504b;
+    --content-3: #6b6b65;
+    --line-1: rgba(33, 33, 32, .12);
+    --line-2: rgba(33, 33, 32, .22);
+    --error: #b42332;
+    --success: #18734b;
+    --success-soft: #eaf5ef;
+    --accent: #6d7ff0;
+    --c-cloud: #1fa487;   /* SRC_COLOR.cloud */
+    --c-local: #8a8f98;   /* SRC_COLOR.local */
+    --c-exam: #e5484d;
+    --c-hw: #e8873a;
+    --elev-1: 0 1px 2px rgba(33, 33, 32, .10);
+    --elev-menu: 0 12px 32px rgba(33, 33, 32, .16);
+    --gutter: 44px;
+    --row-h: 22px;        /* banner 行高 */
+    --row-gap: 4px;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }   /* 作者 display 规则会压过 UA 的 [hidden] */
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+    color: var(--content-1);
+    background: var(--surface-3);
+    -webkit-font-smoothing: antialiased;
+  }
+  .app { height: 100dvh; display: flex; flex-direction: column; background: var(--surface-1); }
+  .app.phone .stage { width: 390px; margin: 0 auto; border-inline: 1px solid var(--line-2); }
+  .app.phone { --gutter: 28px; }
+
+  /* ── 控制条（Demo 专属，非应用 UI） ── */
+  .controls {
+    flex: none; display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 8px 14px; border-bottom: 1px solid var(--line-1); background: var(--surface-1);
+  }
+  .seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: 999px; padding: 2px; gap: 2px; }
+  .seg button {
+    border: 0; background: transparent; padding: 4px 13px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; color: var(--content-2); cursor: pointer; font-family: inherit;
+  }
+  .seg button.on { background: var(--content-1); color: #fff; }
+  .tog {
+    display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line-1);
+    border-radius: 999px; padding: 4px 12px; font-size: 12px; font-weight: 500;
+    color: var(--content-3); background: transparent; cursor: pointer; font-family: inherit;
+  }
+  .tog.on { color: var(--content-1); border-color: var(--line-2); background: var(--surface-3); }
+  .tog .k { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .4; }
+  .tog.on .k { opacity: 1; background: var(--accent); }
+  .cap { margin-left: auto; font-size: 11px; color: var(--content-3); }
+
+  /* ── 事件区（对应 .schedule-stage：铺满剩余高度） ── */
+  .stage { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
+
+  /* ── 现状：芯片行（忠实复刻 —— 外层 div 在 schedule.css 里没有任何样式） ── */
+  .legacy-chips { line-height: 2.1; }
+  .lchip {
+    display: inline-flex; align-items: center; height: 22px; padding: 0 9px;
+    border-radius: 999px; font-size: 11px; font-weight: 500; white-space: nowrap; cursor: pointer;
+  }
+  .lchip.cloud { background: var(--success-soft); color: var(--success); }
+  .lchip.local { background: var(--surface-3); color: var(--content-2); }
+  .lchip.drop {
+    background: #fff; color: var(--error); border: 1.5px dashed var(--error);
+    font-weight: 600; cursor: default;
+  }
+
+  /* ── 周骨架：表头 / all-day 行 / 时间轴 三段共用同一列网格 ── */
+  .week { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+  .grid-row { display: grid; grid-template-columns: var(--gutter) 1fr; }
+
+  .head { flex: none; border-bottom: 1px solid var(--line-2); padding-block: 8px 6px; }
+  .hcell {
+    border-left: 1px solid var(--line-1); text-align: center;
+    font-size: 12.5px; font-weight: 600; color: var(--content-2);
+    font-variant-numeric: tabular-nums;
+  }
+  .hcell:first-child { border-left: 0; }
+  .hcell small { display: block; font-size: 11px; font-weight: 400; color: var(--content-3); }
+  .hcell.is-today, .hcell.is-today small { color: var(--accent); }
+  .day-strip { display: flex; }
+  .day-strip .hcell { flex: 1 1 0; min-width: 0; }
+
+  /* ── 方案 A：all-day banner 行（表头正下方，与 7 列对齐） ── */
+  .allday { flex: none; border-bottom: 1px solid var(--line-1); }
+  /* 「全天」沟槽标：贴第一行顶部对齐，不随行数变化上下浮动 */
+  .agutter {
+    display: flex; align-items: flex-start; justify-content: center; padding-top: 5px;
+    font-size: 10.5px; line-height: var(--row-h); color: var(--content-3);
+  }
+  .alayer { position: relative; }
+  .acol { position: absolute; top: 0; height: 100%; border-left: 1px solid var(--line-1); }
+  /* banner 只有一种外观：全天事件是同一种东西，来源（云/本）不是扫描时该读的维度。
+     数据源改在详情弹层里说。没有前置圆点——它在窄列上白吃 14px，而这 14px 是标题的。 */
+  .banner {
+    position: absolute; height: var(--row-h); border-radius: 999px;
+    display: flex; align-items: center; padding: 0 10px;
+    font-size: 11.5px; font-weight: 600; cursor: pointer; user-select: none;
+    white-space: nowrap; overflow: hidden; box-shadow: var(--elev-1);
+    background: var(--surface-4); color: var(--content-1);
+    transition: transform .15s ease, box-shadow .15s ease, background-color .15s ease;
+  }
+  .banner:hover { transform: translateY(-1px); box-shadow: var(--elev-menu); background: var(--surface-3); }
+  .banner .btxt { overflow: hidden; text-overflow: ellipsis; }
+  .banner .brng { font-size: 10px; font-weight: 500; color: var(--content-3); margin-left: 6px; flex: none; }
+  /* 溢出指示器：占自己的一整行（不叠在最后一行可见 banner 上），左对齐 = 列表在此续接 */
+  .more {
+    position: absolute; height: 18px; display: inline-flex; align-items: center;
+    padding: 0 8px; border-radius: 999px; border: 1px solid var(--line-2);
+    background: var(--surface-1); color: var(--content-3);
+    font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit;
+  }
+  .more:hover { color: var(--content-1); border-color: var(--content-3); background: var(--surface-3); }
+
+  /* 手机档（7 列 × ~55px）：字号与内边距收紧到刚好放下 4 个汉字，
+     仍保持「一行字 + 列对齐」这一套语言；更长的标题由弹层补全。
+     （试过换成压缩条/圆点：4px 浅灰在窄列上几乎看不见，且凭空多出一套视觉语言。） */
+  .app.phone .banner { font-size: 9.5px; padding: 0 4px; }
+  .app.phone .banner .brng { display: none; }          /* 窄列上日期跨度会把标题挤没 */
+  .app.phone .more { font-size: 10px; padding: 0 5px; }
+
+  /* ── 时间轴（课块画布） ── */
+  .bodyrow { flex: 1 1 0; min-height: 0; }
+  .tgutter { position: relative; }
+  .tlabel {
+    position: absolute; left: 0; right: 6px; text-align: right;
+    font-size: 10.5px; line-height: 1; color: var(--content-3);
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  .canvas { position: relative; }
+  .ccol { position: absolute; top: 0; height: 100%; border-left: 1px solid var(--line-1); }
+  .ccol.is-today { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+  .cline { position: absolute; left: 0; right: 0; border-top: 1px solid var(--line-1); }
+  .cline.hour { border-top-color: var(--line-2); }
+  .nowline { position: absolute; z-index: 6; border-top: 2px solid var(--error); }
+  .nowline::before {
+    content: ''; position: absolute; left: -4px; top: -5px; width: 8px; height: 8px;
+    border-radius: 50%; background: var(--error);
+  }
+  .block {
+    position: absolute; z-index: 5; overflow: hidden; border-radius: 4px;
+    padding: 2px 5px; color: #fff; box-shadow: var(--elev-1); cursor: pointer;
+    transition: transform .15s ease, box-shadow .15s ease;
+  }
+  .block:hover { transform: translateY(-1px); box-shadow: var(--elev-menu); }
+  .block .bt { font-size: 12px; font-weight: 700; line-height: 1.3; }
+  .block .bs { font-size: 11px; line-height: 1.3; opacity: .92; margin-top: 1px; overflow: hidden; }
+  .app.phone .block { padding: 1px 3px; }
+  .app.phone .block .bt { font-size: 10.5px; }
+  .app.phone .block .bs { display: none; }
+
+  .empty {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    pointer-events: none; z-index: 4;
+  }
+  .empty .ecard {
+    background: var(--surface-1); border: 1px solid var(--line-1); border-radius: 8px;
+    padding: 10px 18px; color: var(--content-3); font-size: 12.5px; box-shadow: var(--elev-1);
+  }
+
+  /* ── Demo 注释标签（虚线描边，明显区别于应用 UI） ── */
+  .note {
+    position: absolute; font-size: 10.5px; font-weight: 600; padding: 2px 7px;
+    border-radius: 6px; border: 1.5px dashed currentColor; background: rgba(255, 255, 255, .92);
+    pointer-events: none; z-index: 9;
+  }
+  .note.bad { color: var(--error); }
+  .note.good { color: var(--success); }
+
+  /* ── 弹层（+N / banner 详情共用） ── */
+  .pop {
+    position: fixed; z-index: 50; min-width: 190px; max-width: 280px;
+    background: #fff; border: 1px solid var(--line-1); border-radius: 10px;
+    box-shadow: var(--elev-menu); padding: 6px;
+  }
+  .pop h5 { margin: 3px 6px 7px; font-size: 11px; color: var(--content-3); font-weight: 600; }
+  .pop .pit { display: flex; gap: 8px; padding: 6px; border-radius: 6px; }
+  .pop .pit:hover { background: var(--surface-3); }
+  .pop .pdot { width: 7px; height: 7px; border-radius: 50%; margin-top: 5px; flex: none; }
+  .pop .pt { font-size: 12.5px; font-weight: 600; }
+  .pop .pm { font-size: 11px; color: var(--content-3); margin-top: 1px; }
+  .pop .pfoot { margin: 5px 6px 2px; font-size: 10.5px; color: var(--content-3); opacity: .8; }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <!-- Demo 控制条：切换对比模式 / 关闭定时事件（暴露空态误报）/ 手机宽度 -->
+  <div class="controls">
+    <div class="seg" id="segMode">
+      <button data-mode="plan" class="on">方案 A · 列对齐 banner</button>
+      <button data-mode="legacy">现状 · 芯片行</button>
+    </div>
+    <button class="tog on" id="togTimed"><span class="k"></span>定时事件</button>
+    <button class="tog" id="togPhone"><span class="k"></span>手机宽度</button>
+    <span class="cap" id="cap"></span>
+  </div>
+
+  <div class="stage" id="stage">
+    <!-- 现状模式：芯片行（复刻：位于时间轴整体之上、无任何行样式） -->
+    <div class="legacy-chips" id="legacyChips" hidden></div>
+
+    <div class="week">
+      <div class="head grid-row" id="head"></div>
+      <!-- 方案 A：all-day banner 行（表头正下方） -->
+      <div class="allday grid-row" id="alldayRow">
+        <div class="agutter">全天</div>
+        <div class="alayer" id="alayer"></div>
+      </div>
+      <div class="bodyrow grid-row">
+        <div class="tgutter" id="tgutter"></div>
+        <div class="canvas" id="canvas"></div>
+      </div>
+    </div>
+
+    <div class="pop" id="pop" hidden></div>
+  </div>
+</div>
+
+<script>
+/* ═══════════════════════ 1. 数据（同真实页面口径） ═══════════════════════
+ * 周窗：2026-10-26（周一）～ 11-01（周日）；「今天」取真实日期（不在周内则回落周三）。
+ * 全天事件：occurrence 携带 startDay/endDay —— 单天事件两者相等；
+ * 每日重复（背单词打卡）以同 uid 逐日出现，banner 布局时合并为一条整周连续条。 */
+const DAY_NAMES = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+const DATES = ["10/26", "10/27", "10/28", "10/29", "10/30", "10/31", "11/01"];
+const WEEK_START = new Date(2026, 9, 26);
+
+const realNow = new Date();
+const dayDiff = Math.floor((realNow - WEEK_START) / 86400000);
+const TODAY = dayDiff >= 0 && dayDiff <= 6 ? dayDiff : 2;          // 默认周三（10/28）
+const NOW_MIN = realNow.getHours() * 60 + realNow.getMinutes();
+
+/* 全天（src: cloud=云日程 local=本机日程；d0/d1 = 起止日 0..6，含端点） */
+const ALLDAY = [
+  { uid: "sports", title: "校运动会",     src: "cloud", d0: 0, d1: 1 },
+  { uid: "dinner", title: "导师组会聚餐", src: "cloud", d0: 2, d1: 2 },
+  { uid: "club",   title: "社团招新摆摊", src: "cloud", d0: 3, d1: 3 },
+  { uid: "duty",   title: "实验室值班",   src: "cloud", d0: 3, d1: 3 },
+  { uid: "forum",  title: "本科生论坛",   src: "cloud", d0: 3, d1: 3 },
+  { uid: "checkup", title: "拿体检报告",  src: "local", d0: 4, d1: 4 },
+  { uid: "daily",  title: "背单词打卡",   src: "local", d0: 0, d1: 6, rec: true },
+];
+
+/* 定时（课块）：分钟距 0:00；色取 COURSE_PALETTE / SRC_COLOR */
+const BLOCKS = [
+  { d: 0, m0: 480,  m1: 575,  t: "高等数学（上）",  loc: "六教 6A014",  c: "#6d7ff0" },
+  { d: 0, m0: 600,  m1: 695,  t: "大学物理",        loc: "三教 2100",   c: "#3d8bfd" },
+  { d: 1, m0: 810,  m1: 905,  t: "数据结构",        loc: "九教 9402",   c: "#1fa487" },
+  { d: 2, m0: 530,  m1: 625,  t: "线性代数",        loc: "四教 4208",   c: "#b463d6", lane: 0, lanes: 2 },
+  { d: 2, m0: 590,  m1: 685,  t: "英语听说",        loc: "外语楼 B201", c: "#c9971f", lane: 1, lanes: 2 },
+  { d: 2, m0: 1160, m1: 1305, t: "云计算研讨",      loc: "东主楼 10-208", c: "#2f9edb" },
+  { d: 3, m0: 480,  m1: 575,  t: "概率论与数理统计", loc: "六教 6C202", c: "#e07a4f" },
+  { d: 3, m0: 860,  m1: 955,  t: "人工智能导论",    loc: "三教 1200",   c: "#4caf6e" },
+  { d: 4, m0: 590,  m1: 685,  t: "期中考试 · 组成原理", loc: "六教 700", c: "#e5484d" },
+  { d: 4, m0: 920,  m1: 1015, t: "机器学习基础",    loc: "四教 4306",   c: "#d45c8a" },
+  { d: 6, m0: 1320, m1: 1439, t: "⏰ 数值分析作业 DDL", loc: "网络学堂", c: "#e8873a" },
+];
+
+const AXIS_FROM = 450, AXIS_TO = 1440;            // 07:30–24:00（fitAxis 收紧口径）
+const yPct = (m) => ((m - AXIS_FROM) / (AXIS_TO - AXIS_FROM)) * 100;
+
+const state = { mode: "plan", timed: true, phone: false };
+const $ = (id) => document.getElementById(id);
+
+/* ═══════════════════════ 2. banner 行布局（方案 A 核心） ═══════════════════════
+ * 与时间轴 layout() 同一思路：跨天长的先放（占低道），逐事件在其跨度内找最低空道；
+ * 「每日重复」先按 uid 合并成整周连续条 —— 7 个出现收敛为 1 条，不再淹没整行。
+ * 可见道数上限 CAP：桌面 3 / 手机 2；超出的按列折叠成「+N」。 */
+function layoutAllDay(cap) {
+  // 2.1 同 uid 连续日合并（重复规则）
+  const byUid = new Map();
+  for (const e of ALLDAY) byUid.set(e.uid, [...(byUid.get(e.uid) ?? []), e]);
+  const spans = [];
+  let order = 0;
+  for (const list of byUid.values()) {
+    list.sort((a, b) => a.d0 - b.d0);
+    let cur = null;
+    for (const e of list) {
+      if (cur && e.d0 <= cur.d1 + 1) { cur.d1 = Math.max(cur.d1, e.d1); continue; } // 连续/重叠 → 并入
+      cur = { uid: e.uid, title: e.title, src: e.src, d0: e.d0, d1: e.d1, i: order++ };
+      spans.push(cur);
+    }
+  }
+  // 2.2 道次分配：跨度长 → 短，同长按开始日，再按数据原序（不让拼音/字典序决定谁被折叠）
+  spans.sort((a, b) => (b.d1 - b.d0) - (a.d1 - a.d0) || a.d0 - b.d0 || a.i - b.i);
+  const occ = Array.from({ length: 7 }, () => []);  // occ[day][lane] = true
+  for (const s of spans) {
+    let lane = 0;
+    for (;;) {
+      let free = true;
+      for (let d = s.d0; d <= s.d1; d++) if (occ[d][lane]) { free = false; break; }
+      if (free) break;
+      lane++;
+    }
+    for (let d = s.d0; d <= s.d1; d++) occ[d][lane] = true;
+    s.lane = lane;
+  }
+  // 2.3 每列溢出统计
+  const hidden = Array.from({ length: 7 }, () => []);
+  for (const s of spans) if (s.lane >= cap)
+    for (let d = s.d0; d <= s.d1; d++) hidden[d].push(s);
+  const rowsUsed = Math.max(1, ...spans.map((s) => s.lane + 1));
+  const visibleRows = Math.min(cap, rowsUsed);
+  // 每天覆盖到的 span（手机压缩条与弹层都用这一份）
+  const perDay = Array.from({ length: 7 }, () => []);
+  for (const s of spans)
+    for (let d = s.d0; d <= s.d1; d++) perDay[d].push(s);
+  for (const list of perDay) list.sort((a, b) => a.lane - b.lane);
+  // 溢出指示器必须有自己的行：曾用 bottom:3px 钉在层底，正好压住最后一行可见 banner
+  const hasOverflow = hidden.some((h) => h.length > 0);
+  return { spans, hidden, perDay, visibleRows, hasOverflow };
+}
+
+/* ═══════════════════════ 3. 渲染 ═══════════════════════ */
+function renderHead() {
+  const head = $("head");
+  head.innerHTML =
+    `<div></div><div class="day-strip">` +
+    DAY_NAMES.map((n, i) =>
+      `<div class="hcell${i === TODAY ? " is-today" : ""}">${n}<small>${DATES[i]}</small></div>`
+    ).join("") + `</div>`;
+}
+
+function renderAllDay() {
+  const layer = $("alayer");
+  const plan = state.mode === "plan";
+  $("alldayRow").hidden = !plan;
+  if (!plan) return;
+
+  const cap = state.phone ? 2 : 3;
+  const { spans, hidden, perDay, visibleRows, hasOverflow } = layoutAllDay(cap);
+  const OVF_H = 20;                                             // 溢出指示行（18px + 2px 缝）
+  const fmtRange = (s) => s.d0 === s.d1 ? DATES[s.d0] : `${DATES[s.d0]} – ${DATES[s.d1]}`;
+  const srcName = (s) => s.src === "cloud" ? "云日程" : "本机日程";
+  const itemOf = (s) => ({ c: s.src === "cloud" ? "var(--c-cloud)" : "var(--c-local)", t: s.title, m: `${srcName(s)} · ${fmtRange(s)}` });
+
+  layer.style.height = `calc(${visibleRows} * (var(--row-h) + var(--row-gap)) + ${hasOverflow ? OVF_H : 0}px + 4px)`;
+  let html = "";
+  for (let d = 1; d < 7; d++)                                  // 列刻线（空列也见网格）
+    html += `<div class="acol" style="left:${(d * 100) / 7}%"></div>`;
+  for (const s of spans) {
+    if (s.lane >= cap) continue;                               // 折叠进 +N
+    const w = ((s.d1 - s.d0 + 1) * 100) / 7;
+    const l = (s.d0 * 100) / 7;
+    html +=
+      `<div class="banner" data-uid="${s.uid}"
+        style="left:calc(${l}% + 3px); width:calc(${w}% - 6px); top:calc(${s.lane} * (var(--row-h) + var(--row-gap)) + 2px)"
+        title="${fmtRange(s)} · ${s.title}（${srcName(s)}）">` +
+      `<span class="btxt">${s.title}</span>` +
+      // 铺满整周时不写日期：条形本身已经说完了，重复一遍只是噪音
+      (s.d1 > s.d0 && s.d1 - s.d0 + 1 < 7 ? `<span class="brng">${fmtRange(s)}</span>` : "") +
+      `</div>`;
+  }
+  // 溢出指示器：落在自己的行上（不压任何 banner，也不盖住邻列文字）
+  if (hasOverflow)
+    for (let d = 0; d < 7; d++) {
+      if (hidden[d].length === 0) continue;
+      html +=
+        `<button class="more" data-day="${d}" aria-label="${DAY_NAMES[d]}另有 ${hidden[d].length} 项全天事件"
+          style="left:calc(${(d * 100) / 7}% + 3px); top:calc(${visibleRows} * (var(--row-h) + var(--row-gap)) + 2px)">+${hidden[d].length}</button>`;
+    }
+  layer.innerHTML = html;
+
+  layer.querySelectorAll(".banner").forEach((el) => {
+    el.onclick = (ev) => {
+      const s = spans.find((x) => x.uid === el.dataset.uid);
+      if (s) openPop(ev.currentTarget, "全天事件", [itemOf(s)], "在应用中：点击打开事件编辑器");
+    };
+  });
+  layer.querySelectorAll(".more").forEach((el) => {
+    el.onclick = () => {
+      const d = Number(el.dataset.day);
+      openPop(el, `${DAY_NAMES[d]} ${DATES[d]} · 被折叠的全天事件`, hidden[d].map(itemOf));
+    };
+  });
+}
+
+function renderLegacy() {
+  const box = $("legacyChips");
+  box.hidden = state.mode !== "legacy";
+  if (state.mode !== "legacy") return;
+
+  // 复刻真实顺序：云全部（按日期）在前、本机在后 —— 不按日期混排
+  const occ = [];
+  for (const src of ["cloud", "local"])
+    for (const e of ALLDAY.filter((x) => x.src === src))
+      for (let d = e.d0; d <= e.d1; d++) occ.push({ ...e, d });
+  occ.sort((a, b) => a.src.localeCompare(b.src) || a.d - b.d); // 云先本后，各按日期
+
+  const shown = occ.slice(0, 8);                               // slice(0, 8) ← 现状截断
+  const dropped = occ.length - shown.length;
+  box.innerHTML =
+    shown.map((o) => `<span class="lchip ${o.src}">全天 · ${o.title}</span>`).join(" ") +
+    (dropped > 0 ? ` <span class="lchip drop">…后面 ${dropped} 件被静默丢弃（无任何提示）</span>` : "") +
+    `<div class="note bad" style="position:static; display:inline-block; margin-left:8px; vertical-align:2px">芯片不落星期列 · 无日期 · 无悬停提示</div>`;
+}
+
+function renderCanvas() {
+  const canvas = $("canvas"), gutter = $("tgutter");
+  let html = "";
+  // 列底色（今天微底色）
+  for (let d = 0; d < 7; d++)
+    html += `<div class="ccol${d === TODAY ? " is-today" : ""}" style="left:${(d * 100) / 7}%; width:${100 / 7}%"></div>`;
+  // 半小时线（整点加深）
+  for (let m = Math.ceil(AXIS_FROM / 30) * 30; m <= AXIS_TO; m += 30)
+    html += `<div class="cline${m % 60 === 0 ? " hour" : ""}" style="top:${yPct(m)}%"></div>`;
+  // 当前时刻红线（限今天所在列）
+  if (NOW_MIN > AXIS_FROM && NOW_MIN < AXIS_TO)
+    html += `<div class="nowline" style="left:${(TODAY * 100) / 7}%; width:${100 / 7}%; top:${yPct(NOW_MIN)}%"></div>`;
+  // 空态：现状模式只看定时事件（全天被忽略 → 误报）；方案 A 两边都看
+  if (!state.timed && (state.mode === "legacy" || ALLDAY.length === 0)) {
+    const misreport = state.mode === "legacy" && ALLDAY.length > 0;
+    html += `<div class="empty"><div style="text-align:center">` +
+            `<div class="ecard">本周暂无排课与日程</div>` +
+            (misreport ? `<div class="note bad" style="position:static; margin-top:8px">误报：本周年历有全天事件</div>` : "") +
+            `</div></div>`;
+  }
+  // 课块
+  if (state.timed)
+    for (const b of BLOCKS) {
+      const lanes = b.lanes ?? 1, lane = b.lane ?? 0;
+      const l = (b.d * 100 + lane * (100 / lanes)) / 7, w = 100 / lanes / 7;
+      const compact = (b.m1 - b.m0) < 80;
+      html +=
+        `<div class="block" style="left:calc(${l}% + 2px); width:calc(${w}% - 4px); top:calc(${yPct(b.m0)}% + 1px); height:calc(${yPct(b.m1) - yPct(b.m0)}% - 3px); background:${b.c}"
+          title="${b.t}${b.loc ? " @" + b.loc : ""}（${String(Math.floor(b.m0 / 60)).padStart(2, "0")}:${String(b.m0 % 60).padStart(2, "0")}–${String(Math.floor(b.m1 / 60)).padStart(2, "0")}:${String(b.m1 % 60).padStart(2, "0")}）">` +
+        `<div class="bt">${b.t}</div>` + (compact ? "" : `<div class="bs">${b.loc ?? ""}</div>`) + `</div>`;
+    }
+  canvas.innerHTML = html;
+
+  // 时间刻度（每小时）
+  gutter.innerHTML =
+    Array.from({ length: (AXIS_TO - 480) / 60 + 1 }, (_, i) => 480 + i * 60)
+      .map((m) => `<div class="tlabel" style="top:calc(${yPct(m)}% - 5px)">${String(m / 60).padStart(2, "0")}:00</div>`)
+      .join("");
+}
+
+/* ═══════════════════════ 4. 弹层 ═══════════════════════ */
+function openPop(anchor, title, items, foot) {
+  const pop = $("pop");
+  pop.innerHTML =
+    `<h5>${title}</h5>` +
+    items.map((i) =>
+      `<div class="pit"><span class="pdot" style="background:${i.c}"></span>` +
+      `<div><div class="pt">${i.t}</div><div class="pm">${i.m}</div></div></div>`
+    ).join("") + (foot ? `<div class="pfoot">${foot}</div>` : "");
+  pop.hidden = false;
+  const r = anchor.getBoundingClientRect();
+  pop.style.left = Math.min(r.left, window.innerWidth - 300) + "px";
+  pop.style.top = Math.min(r.bottom + 6, window.innerHeight - 180) + "px";
+}
+document.addEventListener("pointerdown", (e) => {
+  const pop = $("pop");
+  if (!pop.hidden && !pop.contains(e.target) && !e.target.closest(".more, .banner")) pop.hidden = true;
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("pop").hidden = true; });
+
+/* ═══════════════════════ 5. 控制条 ═══════════════════════ */
+const CAPTIONS = {
+  plan: "banner 落在星期列 · 多天连续横铺 · 每日重复合并为整周条 · 单列溢出折叠 +N · 空态兼顾全天事件",
+  legacy: "slice(0,8) 静默截断 · 芯片无日期不落列 · 行无样式（手机折行吃高度）· 只有全天事件的周误报空态",
+};
+function render() {
+  $("app").classList.toggle("phone", state.phone);
+  $("cap").textContent = CAPTIONS[state.mode];
+  document.querySelectorAll("#segMode button").forEach((b) => b.classList.toggle("on", b.dataset.mode === state.mode));
+  $("togTimed").classList.toggle("on", state.timed);
+  $("togPhone").classList.toggle("on", state.phone);
+  renderHead();
+  renderAllDay();
+  renderLegacy();
+  renderCanvas();
+  $("pop").hidden = true;
+}
+document.querySelectorAll("#segMode button").forEach((b) =>
+  (b.onclick = () => { state.mode = b.dataset.mode; render(); }));
+$("togTimed").onclick = () => { state.timed = !state.timed; render(); };
+$("togPhone").onclick = () => { state.phone = !state.phone; render(); };
+
+render();
+</script>
+</body>
+</html>
