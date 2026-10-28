@@ -400,7 +400,7 @@ jobs:
             --version "$VERSION" \
             --out release-out/latest.json \
             --releasedAt "$(date -u +%F)" \
-            --notes "分叉 $VERSION：基线跟到上游 0.11.4-fix-1——会话恢复期间不再锁死登录，daemon 启动失败会把真实错误码写进 daemon-startup.log，私有目录 ACL 改为显式 .NET 写入并带超时与失败阶段；分叉保留凭据文件属主接受 Administrators 与系统日历同步轨迹的诊断权限，以及托盘/悬浮球保活、系统日历差异同步与自定义日程重复规则。更新源仍指向 cup113/OneTHU。"
+            --notes "分叉 $VERSION：网络学堂的失败归因修正——附件预览不再把 404 说成「登录失效」（登录墙、网关页、普通 HTML 三分，非 2xx 如实报 HTTP 状态；地址末段为空的不再产出附件，.html 附件可预览）；已批阅或已过期的作业不再因提交页被拒而整页报错，正文与附件照常显示。基线仍是上游 0.11.4-fix-1（会话恢复、daemon 启动诊断、私有目录 ACL），分叉保留凭据文件属主接受 Administrators、系统日历同步轨迹的诊断权限、托盘/悬浮球保活、系统日历差异同步与自定义日程重复规则。更新源仍指向 cup113/OneTHU。"
       - name: Write release notes
         env:
           VERSION: ${{ inputs.version }}
