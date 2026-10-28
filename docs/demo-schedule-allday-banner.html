@@ -324,14 +324,9 @@ function layoutAllDay(cap) {
     for (let d = s.d0; d <= s.d1; d++) hidden[d].push(s);
   const rowsUsed = Math.max(1, ...spans.map((s) => s.lane + 1));
   const visibleRows = Math.min(cap, rowsUsed);
-  // 每天覆盖到的 span（手机压缩条与弹层都用这一份）
-  const perDay = Array.from({ length: 7 }, () => []);
-  for (const s of spans)
-    for (let d = s.d0; d <= s.d1; d++) perDay[d].push(s);
-  for (const list of perDay) list.sort((a, b) => a.lane - b.lane);
   // 溢出指示器必须有自己的行：曾用 bottom:3px 钉在层底，正好压住最后一行可见 banner
   const hasOverflow = hidden.some((h) => h.length > 0);
-  return { spans, hidden, perDay, visibleRows, hasOverflow };
+  return { spans, hidden, visibleRows, hasOverflow };
 }
 
 /* ═══════════════════════ 3. 渲染 ═══════════════════════ */
@@ -351,7 +346,7 @@ function renderAllDay() {
   if (!plan) return;
 
   const cap = state.phone ? 2 : 3;
-  const { spans, hidden, perDay, visibleRows, hasOverflow } = layoutAllDay(cap);
+  const { spans, hidden, visibleRows, hasOverflow } = layoutAllDay(cap);
   const OVF_H = 20;                                             // 溢出指示行（18px + 2px 缝）
   const fmtRange = (s) => s.d0 === s.d1 ? DATES[s.d0] : `${DATES[s.d0]} – ${DATES[s.d1]}`;
   const srcName = (s) => s.src === "cloud" ? "云日程" : "本机日程";
