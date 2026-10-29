@@ -22,7 +22,7 @@ if(!['darwin','win32','linux'].includes(platform)) throw Error('Unsupported desk
 const rawArch=process.env.TAURI_ENV_ARCH??(target.startsWith('aarch64')?'arm64':target.startsWith('x86_64')?'x64':process.arch);
 const arch=({aarch64:'arm64',x86_64:'x64'})[rawArch]??rawArch;
 if(!['arm64','x64'].includes(arch)) throw Error('Unsupported desktop CLI architecture: '+arch);
-if(platform!==process.platform||arch!==process.arch) throw Error('Build the desktop CLI on its target platform/architecture; do not package a host Node binary for a different target.');
+if(platform!==process.platform) throw Error('Build the desktop CLI on its target platform; do not package a host Node binary for a different OS.');
 const output=path.resolve(scriptDir,'../src-tauri/resources/cli-runtime');
 const staging=output+'.staging-'+process.pid;
 const hash=data=>createHash('sha256').update(data).digest('hex');
@@ -44,11 +44,17 @@ function standaloneMacNode(file) {
 }
 async function nodeRuntime() {
   const candidate=process.env.ONETHU_CLI_NODE??process.execPath;
-  const version=JSON.parse(execFileSync(candidate,['-p','JSON.stringify({version:process.version,platform:process.platform,arch:process.arch})'],{encoding:'utf8',env:{...process.env,NODE_OPTIONS:'',NODE_PATH:''}}));
-  if(version.platform!==platform||version.arch!==arch) throw Error('Node candidate does not match the desktop target.');
+  let version=null;
+  try {
+    version=JSON.parse(execFileSync(candidate,['-p','JSON.stringify({version:process.version,platform:process.platform,arch:process.arch})'],{encoding:'utf8',env:{...process.env,NODE_OPTIONS:'',NODE_PATH:''}}));
+  } catch {
+    version=null;
+  }
   // Homebrew Node has external dylibs. Official release archives provide a
   // standalone executable and its complete bundled dependency licence notice.
-  if(checkedVersion(version.version)&&standaloneMacNode(candidate)) {
+  // Same-OS cross-arch builds (x64 macOS packing an arm64 DMG) skip the host
+  // binary and fall through to the official archive for the target arch.
+  if(version&&version.platform===platform&&version.arch===arch&&checkedVersion(version.version)&&standaloneMacNode(candidate)) {
     for(const license of [path.resolve(candidate,'../../LICENSE'),path.join(path.dirname(candidate),'LICENSE')]) {
       try { if((await stat(license)).isFile()) return {binary:candidate,license,version:version.version}; } catch {}
     }

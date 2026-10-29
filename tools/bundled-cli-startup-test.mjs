@@ -10,7 +10,10 @@ import {createHash} from 'node:crypto';
 import {DaemonClient} from '../packages/cli/src/daemon.mjs';
 const source=path.resolve(process.argv[2]??'apps/desktop/src-tauri/resources/cli-runtime');
 const manifest=JSON.parse(await readFile(path.join(source,'runtime.json'),'utf8'));
-assert.equal(manifest.platform,process.platform);assert.equal(manifest.arch,process.arch);
+assert.equal(manifest.platform,process.platform);
+// 同 OS 跨架构（x64 macOS 交叉打包 arm64 DMG）时宿主根本跑不了目标 Node：
+// 完整性照常校验，启动验证交给原生 runner 或真机，这里不假装验过。
+const crossArch=manifest.arch!==process.arch;
 const temp=await mkdtemp(path.join(tmpdir(),'onethu-bundled-startup-'));
 const runtime=path.join(temp,'runtime'),profile=path.join(temp,'profile');
 const hash=b=>createHash('sha256').update(b).digest('hex');
@@ -35,26 +38,30 @@ try {
 
   const nodeBytes=gunzipSync(await readFile(path.join(runtime,'node.gz')));
   assert.equal(hash(nodeBytes),manifest.nodeSha256);await writeFile(node,nodeBytes);await chmod(node,0o755);
-  log=await open(path.join(profile,'startup.log'),'w',0o600);
-  const env={...process.env,ONETHU_CLI_RUNTIME_ID:manifest.buildId};
-  for(const key of ['NODE_OPTIONS','NODE_PATH','ONETHU_ENDPOINT'])delete env[key];
-  child=spawn(node,[path.join(runtime,'bin/onethu.mjs'),'daemon','serve','--data-dir',profile],{cwd:runtime,env,windowsHide:true,detached:process.platform!=='win32',stdio:['ignore','ignore',log.fd]});
-  closed=once(child,'close');let record;
-  for(let i=0;i<150;i++) {
-    if(child.exitCode!==null)throw Error('Packaged CLI exited before discovery');
-    try {record=JSON.parse(await readFile(path.join(profile,'daemon-access.json'),'utf8'));break;}catch{}
-    await new Promise(r=>setTimeout(r,100));
+  if(crossArch) {
+    console.log('✓ packaged '+manifest.platform+'/'+manifest.arch+' '+manifest.version+': files and Node checksums verified (cross-build on '+process.platform+'/'+process.arch+'; startup not run)');
+  } else {
+    log=await open(path.join(profile,'startup.log'),'w',0o600);
+    const env={...process.env,ONETHU_CLI_RUNTIME_ID:manifest.buildId};
+    for(const key of ['NODE_OPTIONS','NODE_PATH','ONETHU_ENDPOINT'])delete env[key];
+    child=spawn(node,[path.join(runtime,'bin/onethu.mjs'),'daemon','serve','--data-dir',profile],{cwd:runtime,env,windowsHide:true,detached:process.platform!=='win32',stdio:['ignore','ignore',log.fd]});
+    closed=once(child,'close');let record;
+    for(let i=0;i<150;i++) {
+      if(child.exitCode!==null)throw Error('Packaged CLI exited before discovery');
+      try {record=JSON.parse(await readFile(path.join(profile,'daemon-access.json'),'utf8'));break;}catch{}
+      await new Promise(r=>setTimeout(r,100));
+    }
+    assert.ok(record,'Packaged runtime publishes discovery in 15 seconds');
+    const client=new DaemonClient(record,5000);
+    const status=await client.call('daemon.status');
+    assert.equal(status.version,manifest.version);assert.equal(status.runtimeId,manifest.buildId);assert.equal(status.desktopProtocolVersion,1);
+    const exported=await client.call('desktop.exportSession');
+    assert.equal(exported.snapshot,null);assert.equal(exported.username,null);
+    await client.call('daemon.stop');
+    await Promise.race([closed,new Promise((_,reject)=>setTimeout(()=>reject(Error('Packaged CLI did not stop')),10000).unref())]);
+    assert.equal(child.exitCode,0);
+    console.log('✓ packaged '+manifest.platform+'/'+manifest.arch+' '+manifest.version+': verified files, detached startup, private export, graceful exit');
   }
-  assert.ok(record,'Packaged runtime publishes discovery in 15 seconds');
-  const client=new DaemonClient(record,5000);
-  const status=await client.call('daemon.status');
-  assert.equal(status.version,manifest.version);assert.equal(status.runtimeId,manifest.buildId);assert.equal(status.desktopProtocolVersion,1);
-  const exported=await client.call('desktop.exportSession');
-  assert.equal(exported.snapshot,null);assert.equal(exported.username,null);
-  await client.call('daemon.stop');
-  await Promise.race([closed,new Promise((_,reject)=>setTimeout(()=>reject(Error('Packaged CLI did not stop')),10000).unref())]);
-  assert.equal(child.exitCode,0);
-  console.log('✓ packaged '+manifest.platform+'/'+manifest.arch+' '+manifest.version+': verified files, detached startup, private export, graceful exit');
 } finally {
   if(child&&child.exitCode===null){child.kill();await closed.catch(()=>{});}
   await log?.close();await rm(temp,{recursive:true,force:true});
