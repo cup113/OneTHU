@@ -142,7 +142,14 @@ grep -rl "onethu.dev.badge.hidden" apps/desktop/dist/assets || echo "正式版�
 - 拉上游用 `git fetch upstream --no-tags`；`git push --tags` / `--follow-tags` 会把上游同名 tag
   推进 fork，是唯一会主动制造冲突的操作。
 - 分叉包的更新源是自己仓库的 Releases（`latest.json`），要在自己仓库里维护这份清单，否则
-  「检查更新」只会报「没查到」。上游的清华云盘镜像在分叉包里被刻意关闭。
+  「检查更新」只会报「没查到」。上游的清华云盘镜像在分叉包里被刻意关闭。清单是**发布资产**，
+  名字必须叫 `latest.json`，形状见 `apps/desktop/src/lib/updater.ts` 文件头：版本、`minVersion`、
+  `url`（可写相对名，按 `releases/latest/download/` 解析）、`size`、`sha256`、说明与
+  `assets.android`；`sha256` 由 Rust 侧流式校验，不符直接丢弃文件。
+- 分叉版本形如 `0.11.3-N`，`N` 是分叉自己的发版序号，每次发版加一。版本比较
+  （`lib/update.ts` 的 `isNewer`）把数字预发布段算作第四段，否则 `0.11.3-2` 会被判成与
+  `0.11.3-1` 相等、更新检查静默失效（护栏：`tools/update-version-order-test.mjs`）。
+  正式版 `x.y.z` 的三段语义不变。
 - 分叉包**不能**沿用正式版签名与包名发布 Android 包：同包名换签名会安装失败，升级链也会断。
 - Android 分叉包在 CI 上构建：`.github/workflows/release.yml` 勾 `android` 输入，走
   `apps/desktop/scripts/build-fork-apk.sh`。runner 上从零生成 Android 工程
@@ -151,6 +158,51 @@ grep -rl "onethu.dev.badge.hidden" apps/desktop/dist/assets || echo "正式版�
   一次；两处任一不符即失败，不会静默产出一个包名正确的正式版。
 - 本机发布线继续用 `build-release-apk.sh`，两套脚本刻意不合并：前者处理 exFAT 外置盘
   （内盘工程 + 符号链接 + `rootDirRel` 绝对路径改写），CI 的 ext4 上这些前提都不存在。
+
+### 从 CI 发一个分叉版
+
+手动触发 `release.yml` 时勾 `fork`、`android`、`release`，并在 `version` 填形如 `0.11.3-2`
+的版本号。三步：
+
+1. `guard` job 先校验输入组合：`release` 必须同时勾 `fork` 与 `android`，不能只跑 Windows、
+   不能用自建 Windows runner（都凑不出三端产物），`fork-<version>` 这个 tag 不能已存在。
+   校验不过直接失败，不占用构建机。
+2. 三个构建 job 共用同一个 `ONETHU_FORK_VERSION`：桌面端由 `build-fork.mjs` 复制一份分叉
+   配置到临时目录、只改 `version` 再交给 tauri；Android 端由 `build-fork-apk.sh` 做同样的事。
+   工作区文件不改，仓库里的版本号仍是默认值。
+3. `publish` job 收齐三端产物，用 `apps/desktop/scripts/make-release-manifest.mjs` 生成
+   `latest.json`（缺平台、或只剩未签名 APK 都会硬失败），以 `fork-<version>` 为 tag 建
+   Release，最后回读 `releases/latest/download/latest.json` 复核清单真的可解析。
+
+`version` 留空则沿用 `tauri.fork.conf.json` 里的值；只验证构建链时不要勾 `release`，
+否则会真的建出一个 Release（tag 已存在时 `guard` 会先拦下，避免覆盖已发布的内容）。
+
+**写权限：job 级 `permissions: contents: write` 在 fork 里有效。** 这一点被探针实测过
+（`probe-fork-token.yml`，四个对照）：声明了写权限的 job 能建 draft release，不声明的报
+`403 Resource not accessible by integration`；`gh api` 与 `gh release create` 两条路径都行，
+`rerun --failed` 之后也仍然可写。
+
+两个**不能**用作判据的东西：
+
+- 仓库设置 `actions/permissions/workflow` 的默认值（`read`）只决定「没声明时」的权限；
+- `GET /repos/<repo>` 的 `.permissions.push` 反映的是调用者的角色，**能建 Release 的 token
+  上它也是 false**（探针实测），拿它当写权限预检会误拦正确发布。
+
+因此 `guard` 的写权限自检是「真建一个 draft release 再删掉」（draft 不进 Releases 列表、
+不影响 `releases/latest`）。**`guard` 与 `publish` 都必须各自声明 `permissions: contents: write`**：
+仓库默认权限是 `read`，job 不声明就拿只读 token，自检会 100% 报
+`403 Resource not accessible by integration`——2026-10-25 那轮发版正是漏了 `guard` 这一行，
+在 16 秒内失败、三端构建全部 skipped。`GH_TOKEN` 仍是
+`secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN` 回落：正常情况下不需要 PAT，只在
+`GITHUB_TOKEN` 真的写不了时作为补救：
+
+```bash
+gh secret set RELEASE_TOKEN --repo cup113/OneTHU   # 可选：fine-grained PAT，只勾 Contents: Read and write
+```
+
+留一条**未解释**的记录：run 40054912059 的 `publish` 重跑曾报 403，而当时该 job 已声明
+`contents: write`，之后用同样的声明重跑探针却成功。原因至今未查明；若再次出现，先看
+`guard` 的写权限自检是否通过——通过了就说明问题不在权限，而在别处。
 
 ## 8. Android 发布签名凭据
 

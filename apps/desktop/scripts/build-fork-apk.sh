@@ -112,7 +112,7 @@ PY
 fi
 
 # ---------- 3. 分叉不变量（在编译之前拦住，别白烧十分钟）----------
-VERSION="$(conf_get "$FORK_CONF" version)"
+VERSION="${ONETHU_FORK_VERSION:-$(conf_get "$FORK_CONF" version)}"
 PRODUCT="$(conf_get "$FORK_CONF" productName)"
 IDENTIFIER="$(conf_get "$FORK_CONF" identifier)"
 
@@ -127,14 +127,24 @@ IDENTIFIER="$(conf_get "$FORK_CONF" identifier)"
   || die "分叉 identifier「$IDENTIFIER」不是合法的 Android 包名"
 echo "· 分叉不变量通过：$PRODUCT $VERSION / $IDENTIFIER"
 
+# 版本按输入覆盖（CI 的手动发版）：整份复制分叉配置、只改 version，不动工作区文件
+CONF_ARG="$FORK_CONF_REL"
+if [ "$VERSION" != "$(conf_get "$FORK_CONF" version)" ]; then
+  mkdir -p "$OUT_DIR"
+  CONF_ARG="$OUT_DIR/fork-runtime.conf.json"
+  node -e 'const fs=require("node:fs");const c=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));c.version=process.argv[2];fs.writeFileSync(process.argv[3],JSON.stringify(c,null,2)+"\n","utf8")' \
+    "$FORK_CONF" "$VERSION" "$CONF_ARG" || die "写临时分叉配置失败：$CONF_ARG"
+  echo "· 分叉版本按输入覆盖：$(conf_get "$FORK_CONF" version) → $VERSION"
+fi
+
 # ---------- 4. 工程就位：每次从零生成 ----------
 # 入库的 gen/android 是指向外置盘的符号链接（本机发布线用），CI 上必须清掉再生成，
 # 否则 tauri 会往一个不存在的目标里写，或者复用上一轮的旧 applicationId。
 if [ -e "$GEN" ] || [ -L "$GEN" ]; then
   rm -rf "$GEN"
 fi
-echo "· 生成 Android 工程（tauri android init，配置 $FORK_CONF_REL）"
-( cd "$DESKTOP" && pnpm exec tauri android init --ci --skip-targets-install --config "$FORK_CONF_REL" )
+echo "· 生成 Android 工程（tauri android init，配置 $CONF_ARG）"
+( cd "$DESKTOP" && pnpm exec tauri android init --ci --skip-targets-install --config "$CONF_ARG" )
 
 GRADLE_APP="$GEN/app/build.gradle.kts"
 [ -f "$GRADLE_APP" ] || die "工程没生成出来：$GRADLE_APP 不存在"
@@ -144,13 +154,20 @@ grep -q "namespace = \"$IDENTIFIER\"" "$GRADLE_APP" \
   || die "生成的工程 namespace 不是 $IDENTIFIER：$(grep -m1 'namespace' "$GRADLE_APP")"
 echo "· 工程 applicationId/namespace = $IDENTIFIER ✓"
 
+# 图标：`tauri android init` 只生成模板默认图，不把仓库 logo 编译进去。不同步的话包里就是
+# 安卓默认图标（实测 run 39996365897 之前的所有分叉 APK）。发布线脚本同样有两步：同步 + 产物校验。
+[ -n "$(command -v ffmpeg || true)" ] || die "找不到 ffmpeg：图标由它按各密度渲染（apt-get install -y ffmpeg）"
+echo "· 同步品牌图标（tools/android-icons.py）"
+python3 "$REPO/tools/android-icons.py" "$GEN" --repo "$REPO" \
+  || die "图标同步失败：$GEN 里的 mipmap 仍是模板默认图"
+
 # ---------- 5. 构建 ----------
 mkdir -p "$OUT_DIR"
 # 前端开关链：ONETHU_FORK 决定更新源指向本 fork，ONETHU_VERSION 让界面版本与安装包一致。
 export ONETHU_FORK=1
 export ONETHU_VERSION="$VERSION"
 echo "· 开始构建（aarch64，release）"
-( cd "$DESKTOP" && pnpm exec tauri android build --apk --target aarch64 --config "$FORK_CONF_REL" )
+( cd "$DESKTOP" && pnpm exec tauri android build --apk --target aarch64 --config "$CONF_ARG" )
 
 UNSIGNED="$(find "$GEN/app/build/outputs/apk" -name '*-unsigned.apk' 2>/dev/null | head -1 || true)"
 [ -n "$UNSIGNED" ] || die "没找到未签名 APK（$GEN/app/build/outputs/apk）"
@@ -191,6 +208,12 @@ VC="$(sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" "$BADGE" | head -1)"
 [ -n "$VC" ] && [ "$VC" -gt 0 ] || die "产物没有有效的 versionCode：$(head -1 "$BADGE")"
 head -1 "$BADGE"
 rm -f "$BADGE"
+
+# 图标复核：比对 APK 里编译后的 PNG 像素与规范 logo，并核对 launcher / adaptive 绑定。
+# 只看源目录不算——`build.gradle.kts` 的 mipmap 来源与最终 APK 的绑定都可能不一致。
+echo "· 复核 APK 图标（像素级）"
+python3 "$REPO/tools/android-icons.py" --repo "$REPO" --verify-apk "$OUT" --aapt2 "$BT/aapt2" \
+  || die "APK 图标不是规范 logo：检查 tools/android-icons.py 的同步步骤是否执行"
 
 # dev 面板是开发者版专属，正式/分叉包里出现就是开关泄漏。
 # 必须解压 .so 再查：lib 条目可以被压缩存放，直接扫整包字节会漏报（护栏形同虚设）。
