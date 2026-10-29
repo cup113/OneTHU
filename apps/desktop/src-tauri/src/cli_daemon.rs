@@ -512,10 +512,14 @@ fn startup_error(profile: &Path) -> String {
     )
 }
 fn spawn_daemon(dir: &Path, profile: &Path, runtime: &Manifest) -> Result<Arc<AtomicBool>, String> {
+    // GUI data can survive uninstall while the separately located CLI profile
+    // is absent. Prepare it before opening any startup log or child process.
+    private_directory(profile)?;
     // The child owns this private file handle after the App exits. A parent pipe
     // would break a resident process's stderr when its GUI host is closed.
     let log_path = profile.join("daemon-startup.log");
-    crate::native_security::private_atomic_write(&log_path, b"")?;
+    crate::native_security::private_atomic_write(&log_path, b"")
+        .map_err(|_| "CLI_DAEMON_INSTALL_UNAVAILABLE")?;
     let log = OpenOptions::new()
         .append(true)
         .open(&log_path)

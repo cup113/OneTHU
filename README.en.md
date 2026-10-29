@@ -2,7 +2,7 @@
 
 <img src="docs/logo-banner.png" alt="One above THU — One THUer should have OneTHU" width="640">
 
-**0.11.4-fix-2 · Revolution**
+**0.11.4-fix-3 · Revolution**
 
 [中文](README.md) · [English](README.en.md)
 
@@ -16,7 +16,7 @@ OneTHU is an unofficial Tsinghua campus application for macOS, Windows and Andro
 
 ## 0.11.4-fix-1 repair
 
-[0.11.4-fix-2: OH services, shared calendar and optional CLI](docs/en/release-0.11.4-fix-2.md)
+[0.11.4-fix-3: upgrade sign-in and update mirror repairs](docs/en/release-0.11.4-fix-3.md)
 
 Repairs Windows sign-in and resident startup, primary and secondary home courses, tablet settings scrolling and phone card heights. Existing 0.11.4 features are retained across all three platforms. [Release notes](docs/en/release-0.11.4-fix-1.md).
 

@@ -1,8 +1,10 @@
+> 最后更新：2026-10-29 13:33
+
 <div align="center">
 
 <img src="docs/logo-banner.png" alt="One above THU — One THUer should have OneTHU" width="640">
 
-**0.11.4-fix-2 · Revolution**
+**0.11.4-fix-3 · Revolution**
 
 [中文](README.md) · [English](README.en.md)
 
@@ -16,7 +18,7 @@ OneTHU 是非官方的清华校园应用，覆盖 macOS、Windows 与 Android。
 
 ## 0.11.4-fix-1 修复
 
-[0.11.4-fix-2 更新：OH 服务、共享日程与可选 CLI](docs/release-0.11.4-fix-2.md)
+[0.11.4-fix-3 更新：升级登录路径与更新镜像修复](docs/release-0.11.4-fix-3.md)
 
 修复 Windows 登录与后台启动、首页一级和二级课程、平板设置滚动及手机卡片高度。保留 0.11.4 的现有功能，三端同步更新。 [更新说明](docs/release-0.11.4-fix-1.md)。
 

@@ -32,7 +32,7 @@ export { createNotificationService } from './notifications/index.mjs';
 export { createImGateway } from './im/index.mjs';
 export { createAssistant } from './assistant/index.mjs';
 export type { ServiceOperation, OperationContext } from './services/types.js';
-export const VERSION = '0.11.4-fix-2';
+export const VERSION = '0.11.4-fix-3';
 export function defaultDataDir() {
   return path.join(process.platform === 'win32' ? (process.env.LOCALAPPDATA || path.join(os.homedir(),'AppData','Local')) : process.platform === 'darwin' ? path.join(os.homedir(),'Library','Application Support') : (process.env.XDG_DATA_HOME || path.join(os.homedir(),'.local','share')), 'OneTHU CLI');
 }

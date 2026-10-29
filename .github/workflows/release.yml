@@ -90,6 +90,10 @@ jobs:
       - name: Check SDK runtime
         timeout-minutes: 6
         run: pnpm --filter @onethu/sdk exec node --import tsx --test --test-timeout=60000 test/*.test.*
+      - name: Check native CLI profile startup and updater IPC
+        run: |
+          node tools/native-cli-startup-test.mjs
+          node tools/updater-native-epoch-test.mjs
       - name: Check Windows WebView threading
         run: node tools/windows-webview-threading-test.mjs
       - name: Check desktop window ownership
