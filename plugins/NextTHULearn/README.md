@@ -1,4 +1,12 @@
+<div align="center">
+
+<img src="../../docs/logo-banner.png" alt="OneTHU" width="640">
+
 # OneTHU NextTHULearn 0.2.1
+
+[独立仓库与下载](https://github.com/smartThise/NextTHULearn) · [OneTHU](https://github.com/smartThise/OneTHU) · [NextTHUxk](https://github.com/smartThise/NextTHUxk)
+
+</div>
 
 进入网络学堂即启用的学习工作台，使用现有网页登录态。数据读取、附件解析、作业提交与讨论接口复用 OneTHU `LearnClient`。
 
@@ -21,7 +29,7 @@
 
 ## 安装与构建
 
-Chrome / Edge 的扩展管理页开启开发者模式，加载此目录（含 `manifest.json`）即可。Firefox 可以在 `about:debugging` 临时加载；当前 ZIP 未经 Mozilla 签名。扩展只处理 `learn.tsinghua.edu.cn` 页面，不需要启动 OneTHU、CLI 或本机服务。页面上的“原版网站”可临时回到学校原界面。
+Chrome / Edge 的扩展管理页开启开发者模式，加载此目录（含 `manifest.json`）即可。Firefox 正式签名包见[独立仓库发布页](https://github.com/smartThise/NextTHULearn/releases/latest)，也可以在 `about:debugging` 临时加载本目录。扩展只处理 `learn.tsinghua.edu.cn` 页面，不需要启动 OneTHU、CLI 或本机服务。页面上的“原版网站”可临时回到学校原界面。
 
 在 OneTHU 仓库根目录安装依赖后运行：
 
