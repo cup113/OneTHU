@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 /**
  * 离线生成 OH/检索直达的**路由表资产**（2026-10-12 task-22）：
  *
@@ -15,7 +16,7 @@ import { parseSearchRows, SEARCH_ROW_FILES } from "./lib/search-rows-parse.mjs";
 
 const rows = parseSearchRows();
 const OUT = "plugins/OneTHU-Harness/assets/routes.json";
-mkdirSync(new URL("../plugins/OneTHU-Harness/assets", import.meta.url).pathname, { recursive: true });
+mkdirSync(fileURLToPath(new URL("../plugins/OneTHU-Harness/assets", import.meta.url)), { recursive: true });
 
 /** kind：tab 唯一决定家族（OneTHU Harness → oh；插件 → plugins；其余设置为设置页行）；
  *  tier/view 把「二级切档」表达成数据（OH 行带 basic/advanced；插件行带 mine/market）。 */

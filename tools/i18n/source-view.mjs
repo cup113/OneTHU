@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 /**
  * Existing architecture guards inspect source + visible Chinese copy together.
  * Resolve literal, imported i18n calls from the real catalog for those assertions.
@@ -6,7 +7,7 @@
 import fs from "node:fs";
 import ts from "typescript";
 import {readDataFile} from "./dictionary.mjs";
-const messages=readDataFile(new URL("../../apps/desktop/src/i18n/locales/zh-CN.ts",import.meta.url).pathname).messages;
+const messages=readDataFile(fileURLToPath(new URL("../../apps/desktop/src/i18n/locales/zh-CN.ts",import.meta.url))).messages;
 export function localizedSource(source,file="source.tsx"){
   if(typeof source!=="string"||!source.includes("i18n/"))return source;
   const ast=ts.createSourceFile(String(file),source,99,true),edits=[],bindings=new Set();

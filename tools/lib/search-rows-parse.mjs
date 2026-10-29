@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 /**
  * 修改后的 searchRows：检索行注册块的**唯一离线解析器**（tools 共享；2026-10-12 task-22）。
  *
@@ -23,7 +24,7 @@ export const SEARCH_ROW_FILES = [
   "apps/desktop/src/pages/Plugins.tsx",
 ];
 
-const REPO_ROOT = new URL("../../", import.meta.url).pathname;
+const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
 /** Parse declarations without executing application code, getters, or translation modules. */
 export function parseSearchRows() {

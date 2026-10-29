@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { fileURLToPath } from "node:url";
 /* ════════════════════════════════════════════════════════════════════════════
  * 对比度护栏 —— 把 2026-10-16 那轮排查里「跨文件必须一致」的几条钉住
  *
@@ -13,7 +14,7 @@
  * ══════════════════════════════════════════════════════════════════════════ */
 import { readFileSync } from "node:fs";
 
-const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/[\\/]$/, "");
 const ENGINE = readFileSync(`${ROOT}/apps/desktop/src/lib/textContrast.ts`, "utf8");
 const CSS = readFileSync(`${ROOT}/apps/desktop/src/styles/explorer.css`, "utf8");
 const WORKBENCH = readFileSync(`${ROOT}/packages/gui/src/recipes/workbench.css`, "utf8");

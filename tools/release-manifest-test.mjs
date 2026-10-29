@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 /**
  * 更新清单生成器的行为护栏（`apps/desktop/scripts/make-release-manifest.mjs`）。
  *
@@ -19,7 +20,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const REPO = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+const REPO = fileURLToPath(new URL("..", import.meta.url));
 const { buildManifest, writeManifest } = await import(
   new URL("../apps/desktop/scripts/make-release-manifest.mjs", import.meta.url).href
 );

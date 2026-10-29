@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 /**
  * 作业「忽略」护栏（R21c 用户定案）。
  *
@@ -96,7 +97,7 @@ const walk = (dir, out = []) => {
   }
   return out;
 };
-const root = new URL("../apps/desktop/src", import.meta.url).pathname;
+const root = fileURLToPath(new URL("../apps/desktop/src", import.meta.url));
 const EXEMPT = [/AssignmentDetailPage\.tsx$/, /SearchPage\.tsx$/, /widgetRuntime\.ts$/, /hwIgnore\.ts$/];
 for (const fp of walk(root)) {
   if (EXEMPT.some((re) => re.test(fp))) continue;
