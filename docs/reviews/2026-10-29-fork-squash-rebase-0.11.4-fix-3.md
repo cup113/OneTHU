@@ -80,7 +80,7 @@ i18n 批次那 96 个文件的语义差异只有两样：`sourceHash` 变化、`
 2. **OH 服务与日历数据统一**（`sharedCalendar.ts`、`cloudCal.ts` 改走
    `readCalendarDocument`、`desktop.dataRead/dataWrite/cloudSync` 等新 RPC）。
 
-## 对分叉的影响（需要决策，未在本次改写里处理）
+## 对分叉的影响（1–3 已在同日落地，见文末「后续」）
 
 1. **分叉 CLI 会直接不可用**：`cli_package.rs` 把来源写死成
    `api.github.com/repos/smartThise/OneTHU/releases/tags/v{version}`、
@@ -96,9 +96,7 @@ i18n 批次那 96 个文件的语义差异只有两样：`sourceHash` 变化、`
    调用，`79f98339` 的「同 OS 跨架构不用宿主 Node」与启动测试的「跨架构不假装验过启动」仍成立；
    只是它现在服务的是可选 CLI 包，而不是应用内嵌运行时。
 
-可选的收敛方向（需要单独决定，不宜夹带在历史改写里）：给 `cli_package.rs` 加一个和
-`lib/updater.ts` 同款的编译期分叉开关（仓库名 + `fork-<version>` tag），并在发版链路里
-①把 `packages/cli/package.json` 的版本跟到分叉版本、②把 CLI zip 一并发布。
+落地方式见文末「后续」；历史改写本身没有夹带这些改动。
 
 ## 验证
 
@@ -114,7 +112,7 @@ i18n 批次那 96 个文件的语义差异只有两样：`sourceHash` 变化、`
   `yuketang-runtime-sync`；`fork-build`、`release-manifest`、`update-version-order`、
   `desktop-keepalive`、`settings-ia`、`motion`、`update-check-lifecycle`、
   `desktop-lifecycle-policy`、`cli-session-handoff`、`native-session-epoch`、`test:oh` 的前四项。
-- 红区（逐条归因，均非本次改写引入）：
+- 红区（逐条归因，均非本次改写引入；前两条随后已修，见「后续」）：
   - `tools/cloud-calendar-test.mjs` 在 fixture 处报
     `Cannot destructure property 'readCalendarDocument' of … ["./sharedCalendar.js"] as it is
     undefined`。上游 `cloudCal.ts` 已改为 `import … from "./sharedCalendar.js"`（4 处），
@@ -131,7 +129,33 @@ i18n 批次那 96 个文件的语义差异只有两样：`sourceHash` 变化、`
 
 - 三端打包未跑：未产出 NSIS/DMG/APK，只做前端构建与 `cargo check`。
 - 真机未跑：周滑动动画、全天横幅吸顶、圆钮拖动、手机 Sheet 均只过离线用例与构建。
-- 上游新的 CLI 安装/下载链路未在分叉里跑通（原因见「影响」第 1、2 条，属待决策项而非验证遗漏）。
+- CLI 包的完整链路只验证到「本机打包 + 校验和 + 启动」；真实 GitHub Release 的
+  `releases/tags/fork-<version>` 查询与资产下载要在发版后才有真数据。
+
+## 后续：CLI 分叉化与两条红灯（同日落地）
+
+- `b1d5acd3` test(cloud-calendar)：夹具补 `./sharedCalendar.js`（按同一套 data: 模块注入）
+  与 `../lib/sharedRuntime.js`（恒 false，误走共享分支就大声失败）。159 项检查恢复执行，
+  其中包含本仓追加的重复规则用例。
+- `41b21c3e` test(oh)：启动守卫改认 `syncDesktopKeepAlive()` 门面 + 门面内调
+  `syncOverlayPreference()`。把门面调用删掉时断言当场失败（验证后按字节还原）。
+- `c94f3d18` feat(cli)：
+  - `cli_package.rs` 加编译期开关（`option_env!("ONETHU_FORK")`，只由 `build-fork.mjs` 设置），
+    仓库与 tag 跟着构建身份走（分叉 `fork-<version>`），分叉不退回校园云盘镜像；
+  - 新增 `apps/desktop/scripts/cli-package-version.mjs`：CLI 包版本 = 应用版本
+    （`ONETHU_CLI_VERSION` → `ONETHU_FORK_VERSION` → `tauri.fork.conf.json` →
+    `packages/cli/package.json`），并拒绝会破坏文件名/清单的版本串；
+  - `build-cli-runtime.mjs` 同时改写包内 `package.json` 与 `packages/sdk/src/index.ts` 的
+    `VERSION` 常量（`daemon.status` 报的就是它，只改前者会握手失败），构建完按字节还原；
+  - 发版链路构建 CLI 包时传分叉开关与版本，`publish` 把 `OneTHU-CLI_*.zip` 与 `.sha256`
+    一起发；守卫 `tools/fork-cli-package-test.mjs`（23 项）进 CI。
+
+  验证：`cargo check` 两条分支都通过；`ONETHU_FORK=1` 时用 `const _: () = assert!(!FORK_BUILD)`
+  探针确认编译期开关真生效（探针已按字节还原）。`ONETHU_FORK=1` 实打产出
+  `OneTHU-CLI_0.11.4-4_win32_x64.zip`：包内 `package.json`、`runtime.json` 都是 `0.11.4-4`，
+  资产名与 `cli_package.rs` 拼出来的完全一致；`bundled-cli-startup-test` 通过
+  （`✓ packaged win32/x64 0.11.4-4`），daemon 自报版本已对齐。guard 抓违规的能力也验过：
+  把 tag 改回 `v{version}` 会当场红。
 
 ## 回退
 
