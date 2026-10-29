@@ -98,6 +98,8 @@ jobs:
         run: node tools/windows-webview-threading-test.mjs
       - name: Check desktop window ownership
         run: node tools/desktop-lifecycle-policy-test.mjs
+      - name: Check background keep-alive carriers
+        run: node --import ./tools/ts-resolve-register.mjs tools/desktop-keepalive-test.mjs
       - name: Check cloud account boundaries
         run: node tools/seafile-account-lifecycle-test.mjs
       - name: Check authentication recovery and account ownership

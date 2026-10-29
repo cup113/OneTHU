@@ -465,49 +465,152 @@ await check("full login keeps 2FA hooks, uses one OAuth entry and completes auth
   assert.deepEqual(actions, ["FIND_APPROACHES", "SEND_CODE", "VERITY_TOTP_CODE"]);
   assert.equal(successes, 1);
 });
-await check("a live WebVPN gateway detour cannot block re-authentication", async () => {
+
+/* ────────── 网关仍登录：入口被甩回 WebVPN 自己的应用页 ──────────
+ * 现场（2026-10-22T15:08）：`/login?oauth_login=true` 302 直落网络学堂应用页（2760 字符），
+ * OAuth 根本没开始 → 旧代码只能报 unexpected-page，且每次重试都一样。宿主清掉网关会话后
+ * 应该只重取一次入口；没清动或没接钩子则必须保持原分类（严格向后兼容）。 */
+const GATEWAY_FINAL = "https://webvpn.tsinghua.edu.cn/https/77726476706e69737468656265737421fcf2408e297e7c4377068ea48d546d30ca8cc97bcc/f/wlxt/index/course/student/";
+const ID_FORM_FINAL = "https://id.tsinghua.edu.cn/do/off/ui/auth/login/form/20843963f89b3072788f7fe75a5d9322/0";
+const GATEWAY_PAGE = `<html><body><div id="app"></div><script>window.__vpn_hostname_data={};window.__vpn_app_hostname_data={};</script>${"x".repeat(2600)}</body></html>`;
+const replyAt = (text, finalUrl, status = 200) => ({ text, status, headers: [], finalUrl });
+const entryGate = (state) => async (url, init) => {
+  state.calls.push({ url, ...init });
+  if (url.includes("oauth_login=true")) {
+    state.entries++;
+    return state.entries === 1 ? replyAt(GATEWAY_PAGE, GATEWAY_FINAL) : state.retry(state.entries);
+  }
+  if (url === ID_CHECK) {
+    state.posts++;
+    return state.check();
+  }
+  if (url.includes("/do/off/ui/auth/login/form/")) return replyAt(SUCCESS, url);
+  if (url.endsWith("/fixture-callback")) return replyAt("portal", url);
+  throw new Error("Unexpected fixture route: " + url);
+};
+
+await check("gateway landing is cleared once and the credential entry retried once", async () => {
   clearOutstandingLogin();
-  const calls = [];
-  const PORTAL = '<main>WebVPN 门户</main>';
-  const LOGOUT = "https://webvpn.tsinghua.edu.cn/logout";
-  const OAUTH = "https://webvpn.tsinghua.edu.cn/login?oauth_login=true";
-  setPlatformFetch(async (url, init) => {
-    calls.push({ url, ...init });
-    if (url === OAUTH) return calls.filter(c => c.url === OAUTH).length === 1 ? reply(PORTAL, "https://webvpn.tsinghua.edu.cn/") : reply(KEY, url);
-    if (url === LOGOUT) return reply("logged out", url);
-    if (url === ID_CHECK) return reply(SUCCESS, url);
-    if (url.endsWith("/fixture-callback")) return reply("portal", "https://webvpn.tsinghua.edu.cn/");
-    if (url.includes("/do/off/ui/auth/login/form/")) return reply(SUCCESS, url);
-    if (url.includes("/lb-auth/lbredirect?")) return reply("info page", url);
-    throw new Error("Unexpected fixture route");
-  });
-  const h = { ...helper(), beforeLoginAttemptHook: async () => {}, afterLoginSuccessHook: () => {} };
+  const state = { calls: [], entries: 0, posts: 0 };
+  let clears = 0;
+  const entries = [];
+  const snaps = [];
+  const h = { ...helper(), clearCookieHandler: async () => {}, onStaleGatewaySession: async () => { clears++; return true; }, onAuthEntry: e => entries.push(e), onAuthPageSnapshot: s => snaps.push(s) };
+  state.retry = () => replyAt(KEY, ID_FORM_FINAL);
+  state.check = () => replyAt(SUCCESS, ID_CHECK);
+  setPlatformFetch(entryGate(state));
   await login(h, "123456", "fixture-only");
-  assert.equal(calls.filter(c => c.url === LOGOUT).length, 1, "gateway session ends before the OAuth retry");
-  assert.equal(calls.filter(c => c.url === OAUTH).length, 2, "entry retried exactly once");
-  assert.equal(calls.filter(c => c.url === ID_CHECK).length, 1, "credentials submitted once after recovery");
-  assert.ok(calls.findIndex(c => c.url === LOGOUT) > calls.findIndex(c => c.url === OAUTH), "logout follows the detour");
+  assert.equal(clears, 1);
+  assert.equal(state.entries, 2, "exactly one retry after the gateway reset");
+  assert.equal(state.posts, 1, "one credential POST on the recovered entry");
+  assert.deepEqual(entries.map(e => [e.gateway, e.cleared, e.retried]), [[true, true, false]]);
+  assert.ok(entries[0].finalPath.startsWith("https://webvpn.tsinghua.edu.cn/https/"));
+  assert.doesNotMatch(entries[0].finalPath, /\?/, "diagnostics never carry a query string");
+  assert.deepEqual(snaps.map(s => s.reason), ["gateway-landing"], "the pinned gateway page is kept for local forensics");
+  assert.equal(snaps[0].finalUrl, GATEWAY_FINAL);
 });
-await check("the public ID form is used when the gateway still detours", async () => {
+
+await check("a gateway landing without a host hook keeps the original classification", async () => {
   clearOutstandingLogin();
-  const calls = [];
-  const PORTAL = '<main>WebVPN 门户</main>';
-  const OAUTH = "https://webvpn.tsinghua.edu.cn/login?oauth_login=true";
-  const ID_FORM = "https://id.tsinghua.edu.cn/do/off/ui/auth/login/form/";
-  setPlatformFetch(async (url, init) => {
-    calls.push({ url, ...init });
-    if (url === OAUTH) return reply(PORTAL, "https://webvpn.tsinghua.edu.cn/");
-    if (url === "https://webvpn.tsinghua.edu.cn/logout") return reply("logged out", url);
-    if (url === ID_FORM) return reply(KEY, url);
-    if (url === ID_CHECK) return reply(SUCCESS, url);
-    if (url.endsWith("/fixture-callback")) return reply("portal", "https://webvpn.tsinghua.edu.cn/");
-    if (url.includes("/do/off/ui/auth/login/form/")) return reply(SUCCESS, url);
-    if (url.includes("/lb-auth/lbredirect?")) return reply("info page", url);
-    throw new Error("Unexpected fixture route");
-  });
-  const h = { ...helper(), beforeLoginAttemptHook: async () => {}, afterLoginSuccessHook: () => {} };
-  await login(h, "123456", "fixture-only");
-  assert.equal(calls.filter(c => c.url === ID_FORM).length, 1, "direct ID form reached without WebVPN");
-  assert.equal(calls.filter(c => c.url === ID_CHECK).length, 1);
+  const state = { calls: [], entries: 0, posts: 0 };
+  let entries = 0;
+  const h = { ...helper(), clearCookieHandler: async () => {}, onAuthEntry: () => { entries++; } };
+  state.retry = () => replyAt(KEY, ID_FORM_FINAL);
+  state.check = () => replyAt(SUCCESS, ID_CHECK);
+  setPlatformFetch(entryGate(state));
+  await assert.rejects(login(h, "123456", "fixture-only"), errorIs("unexpected-page", "credential-entry"));
+  assert.equal(state.entries, 1, "no retry without a host hook");
+  assert.equal(state.posts, 0, "a proxied application page never gets credentials");
+  assert.equal(entries, 1, "the diagnostic hook still sees the entry");
 });
+
+await check("a failed gateway reset falls back instead of claiming a pinned session", async () => {
+  clearOutstandingLogin();
+  const state = { calls: [], entries: 0, posts: 0 };
+  let clears = 0;
+  const h = { ...helper(), clearCookieHandler: async () => {}, onStaleGatewaySession: async () => { clears++; return false; } };
+  state.retry = () => replyAt(KEY, ID_FORM_FINAL);
+  state.check = () => replyAt(SUCCESS, ID_CHECK);
+  setPlatformFetch(entryGate(state));
+  await assert.rejects(login(h, "123456", "fixture-only"), errorIs("unexpected-page", "credential-entry"));
+  assert.equal(clears, 1);
+  assert.equal(state.entries, 1, "a refused reset must not retry");
+});
+
+await check("a gateway that still pins the entry after the reset reports a dedicated reason", async () => {
+  clearOutstandingLogin();
+  const state = { calls: [], entries: 0, posts: 0 };
+  let clears = 0;
+  const entries = [];
+  const h = { ...helper(), clearCookieHandler: async () => {}, onStaleGatewaySession: async () => { clears++; return true; }, onAuthEntry: e => entries.push(e) };
+  state.retry = () => replyAt(GATEWAY_PAGE, GATEWAY_FINAL);
+  state.check = () => { throw new Error("must not post"); };
+  setPlatformFetch(entryGate(state));
+  await assert.rejects(login(h, "123456", "fixture-only"), errorIs("gateway-session-pinned", "credential-entry"));
+  assert.equal(clears, 1, "the gateway session is cleared at most once per attempt");
+  assert.equal(state.entries, 2);
+  assert.equal(state.posts, 0);
+  assert.deepEqual(entries.map(e => [e.gateway, e.cleared, e.retried]), [[true, true, false], [true, true, true]]);
+});
+
+await check("an ID-side page never triggers the gateway reset", async () => {
+  clearOutstandingLogin();
+  const state = { calls: [], entries: 0, posts: 0 };
+  let clears = 0;
+  const snaps = [];
+  const h = { ...helper(), clearCookieHandler: async () => {}, onStaleGatewaySession: async () => { clears++; return true; }, onAuthPageSnapshot: s => snaps.push(s) };
+  state.retry = () => replyAt(KEY, ID_FORM_FINAL);
+  state.check = () => replyAt(SUCCESS, ID_CHECK);
+  setPlatformFetch(async (url, init) => {
+    state.calls.push({ url, ...init });
+    if (url.includes("oauth_login=true")) return replyAt("<main>请登录</main>", ID_FORM_FINAL);
+    throw new Error("Unexpected fixture route: " + url);
+  });
+  await assert.rejects(login(h, "123456", "fixture-only"), errorIs("unexpected-page", "credential-entry"));
+  assert.equal(clears, 0, "an ID-domain page is a page variant, not a pinned gateway session");
+  assert.deepEqual(snaps.map(s => [s.reason, s.finalUrl]), [["unexpected-page", ID_FORM_FINAL]], "the unclassified page is kept with its real landing URL");
+});
+
+await check("the gateway portal home counts as an authenticated landing and is recovered", async () => {
+  clearOutstandingLogin();
+  const state = { calls: [], entries: 0, posts: 0 };
+  let clears = 0;
+  const snaps = [];
+  const h = { ...helper(), clearCookieHandler: async () => {}, onStaleGatewaySession: async () => { clears++; return true; }, onAuthPageSnapshot: s => snaps.push(s) };
+  const PORTAL = `<html><head><title>清华大学WebVPN - 资源站点</title></head><body>清华大学WebVPN 欢迎您 个人信息 注销</body></html>`;
+  state.retry = () => replyAt(KEY, ID_FORM_FINAL);
+  state.check = () => replyAt(SUCCESS, ID_CHECK);
+  setPlatformFetch(async (url, init) => {
+    state.calls.push({ url, ...init });
+    if (url.includes("oauth_login=true")) {
+      state.entries++;
+      return state.entries === 1 ? replyAt(PORTAL, "https://webvpn.tsinghua.edu.cn/") : state.retry();
+    }
+    if (url === ID_CHECK) { state.posts++; return state.check(); }
+    if (url.includes("/do/off/ui/auth/login/form/")) return replyAt(SUCCESS, url);
+    if (url.endsWith("/fixture-callback")) return replyAt("portal", url);
+    throw new Error("Unexpected fixture route: " + url);
+  });
+  await login(h, "123456", "fixture-only");
+  assert.equal(clears, 1, "the portal landing triggers the same gateway reset");
+  assert.equal(state.entries, 2);
+  assert.equal(state.posts, 1);
+  assert.deepEqual(snaps.map(s => s.reason), ["gateway-landing"]);
+});
+
+await check("a bare webvpn login shell is not mistaken for a pinned gateway session", async () => {
+  clearOutstandingLogin();
+  let clears = 0;
+  const snaps = [];
+  const h = { ...helper(), clearCookieHandler: async () => {}, onStaleGatewaySession: async () => { clears++; return true; }, onAuthPageSnapshot: s => snaps.push(s) };
+  const SHELL = "<html><head><title>清华大学WebVPN</title></head><body><div id='app'></div></body></html>";
+  setPlatformFetch(async (url) => {
+    if (url.includes("oauth_login=true")) return replyAt(SHELL, "https://webvpn.tsinghua.edu.cn/login");
+    throw new Error("Unexpected fixture route: " + url);
+  });
+  await assert.rejects(login(h, "123456", "fixture-only"), errorIs("unexpected-page", "credential-entry"));
+  assert.equal(clears, 0, "/login with no redirect means the gateway itself is not signed in");
+  assert.deepEqual(snaps.map(s => s.reason), ["unexpected-page"]);
+});
+
 console.log(`${count} login public-key regressions passed (offline).`);

@@ -8,7 +8,7 @@
 
 import { APP_CODENAME } from "./update.js";
 import { isAndroidNavigator } from "./androidHost.js";
-import { isTauri, loadRemembered, learn, session } from "./clients.js";
+import { isTauri, lastAuthEntryText, loadRemembered, learn, session } from "./clients.js";
 import { lastErrorText } from "./transport.js";
 import { redactNetworkLog } from "./networkLog.js";
 
@@ -32,6 +32,23 @@ function oneLine(s: string, max: number): string {
   return t ? t.slice(0, max) : "-";
 }
 
+/** 应用数据目录能否真正落盘：写一个一次性 key 再读回。
+ *  现场（2026-10-23）：日志、同意协议、状态文件同时静默丢失，需要摘要里有一行自证结论。 */
+async function persistenceProbe(): Promise<string> {
+  if (!isTauri) return "-";
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const token = `probe-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    await invoke("state_write", { name: "__diag_probe", content: JSON.stringify({ token }) });
+    const back = await invoke<string | null>("state_read", { name: "__diag_probe" });
+    const ok = typeof back === "string" && back.includes(token);
+    await Promise.resolve(invoke("state_delete", { name: "__diag_probe" })).catch(() => undefined);
+    return ok ? "ok" : "读回不一致";
+  } catch (e) {
+    return `失败：${e instanceof Error ? e.message : String(e)}`;
+  }
+}
+
 /** 摘要正文（纯文本，可直接粘贴到反馈里）。 */
 export async function buildDiagnostics(): Promise<string> {
   const remembered = await loadRemembered().catch(() => null);
@@ -39,8 +56,10 @@ export async function buildDiagnostics(): Promise<string> {
     ["版本", `OneTHU ${__APP_VERSION__} “${APP_CODENAME}”`],
     ["环境", `${hostLabel()} · ${navigator.userAgent.slice(0, 90)}`],
     ["时间", new Date().toISOString()],
+    ["本机写盘", await persistenceProbe()],
     ["登录状态", `${session.state} · 已保存密码 ${remembered ? "是" : "否"}`],
     ["学习会话", learn.lastCsrfDebug || "本次运行没有取过"],
+    ["登录入口", oneLine(lastAuthEntryText(), 160) || "-"],
     ["课程页", oneLine(learn.lastDebug, 200)],
     ["学习响应", oneLine(learn.lastResponseDebug, 140)],
     ["分组页", oneLine(learn.lastGroupsDebug, 140)],

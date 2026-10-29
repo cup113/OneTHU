@@ -6,7 +6,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "prebuild": "node ../../tools/i18n-test.mjs",
+    "dev:app": "node scripts/dev-app.mjs",
+    "predev": "node ../../tools/ensure-info-lib.mjs",
+    "prebuild": "node ../../tools/i18n-test.mjs && node ../../tools/ensure-info-lib.mjs",
     "build": "vite build",
     "build:dev": "node scripts/build-dev.mjs",
     "preview": "vite preview",

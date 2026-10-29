@@ -3,6 +3,7 @@ import { t } from "../i18n/index.js";
 const reasons = new Set([
   "missing-public-key", "invalid-public-key", "empty-response", "access-restricted",
   "trust-limit", "unexpected-page", "unsafe-confirmation", "confirmation-loop", "gateway-unavailable",
+  "gateway-session-pinned",
 ]);
 
 /** Stable library codes only. Never log page HTML, session IDs or server-provided attributes. */
@@ -39,6 +40,7 @@ export function explainLoginError(error: unknown): string | null {
     if (e.reason === "access-restricted") return t("login.error.restricted");
     if (e.reason === "invalid-public-key" || e.reason === "unsafe-confirmation") return t("login.error.invalidForm");
     if (e.reason === "confirmation-loop") return t("login.error.confirmationLoop");
+    if (e.reason === "gateway-session-pinned") return t("login.error.gatewaySession");
     return t("login.error.prepareFailed");
   }
   // Older library instances can still be alive during a development hot reload.

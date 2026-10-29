@@ -214,6 +214,25 @@ import { Device } from "./models/network/device";
 import { SportsReservationRecord } from "./models/home/sports";
 import { Schedule } from "./models/schedule/schedule";
 
+/** 认证入口的隐私安全现场：只含脱敏后的 origin+path、状态码、长度与恢复结果。 */
+export interface AuthEntryDiagnostic {
+    finalPath: string;
+    status: number;
+    chars: number;
+    gateway: boolean;
+    cleared: boolean;
+    retried: boolean;
+}
+
+/** 未被识别的认证页原文（只在失败分支回调；宿主自行决定落盘与保留策略）。 */
+export interface AuthPageSnapshot {
+    stage: "credential-entry" | "trusted-confirmation";
+    reason: string;
+    finalUrl: string;
+    chars: number;
+    html: string;
+}
+
 export class InfoHelper {
     public userId = "";
     public password = "";
@@ -269,6 +288,25 @@ export class InfoHelper {
     public beforeLoginAttemptHook: (() => Promise<void>) | undefined = undefined;
     /** Called only when the current full authentication chain completes. */
     public afterLoginSuccessHook: (() => void) | undefined = undefined;
+
+    /** Invoked when the credential entry landed on the campus gateway's own
+     *  already-signed-in page (WebVPN keeps its session even though the ID
+     *  session is gone, so `/login?oauth_login=true` never starts OAuth).
+     *  The host clears that gateway session and resolves true so the same
+     *  attempt can fetch the entry one more time. Resolve false (or leave
+     *  undefined) to keep the deterministic failure instead of retrying. */
+    public onStaleGatewaySession: (() => Promise<boolean>) | undefined = undefined;
+
+    /** Privacy-safe view of the credential entry for diagnostics: sanitized
+     *  origin+path, status, length and the recovery outcome. Never page text. */
+    public onAuthEntry: ((entry: AuthEntryDiagnostic) => void) | undefined = undefined;
+
+    /** Called only when an authentication page could not be classified (or the
+     *  gateway pinned the entry). Carries the page markup itself: the host is
+     *  expected to store it locally for the user's own debugging and never to
+     *  put it in an uploadable diagnostic. Failing here must never change the
+     *  authentication outcome. */
+    public onAuthPageSnapshot: ((snapshot: AuthPageSnapshot) => void) | undefined = undefined;
 
     /**
      * Invoked when a login error occurs.

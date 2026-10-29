@@ -136,17 +136,20 @@ export async function nativeSeedCookies(url: string, lines: string[], epoch?: nu
   await invoke("http_native_seed", { url, lines, epoch }).catch(normalizeNativeSessionError);
 }
 
-export async function nativeCookieClear(): Promise<void> {
+/** 按域后缀清原生 cookie 仓（与 Rust http_native_clear_cookies_domain 同语义） */
+export async function nativeCookieClearDomains(suffixes: string[]): Promise<void> {
   try {
     const { invoke } = await import("@tauri-apps/api/core");
-    // 域清（id 单点互踢根治）：learn/info/教务/webvpn 的会话票全保，只清死域。
-    // 全清曾让重建后各页集体红条几秒（learn/info 会话陪葬要漫游重拉）。
-    await invoke("http_native_clear_cookies_domain", {
-      suffixes: ["id.tsinghua.edu.cn", "oauth.tsinghua.edu.cn"],
-    });
+    await invoke("http_native_clear_cookies_domain", { suffixes });
   } catch {
     /* 非 tauri 环境忽略 */
   }
+}
+
+export async function nativeCookieClear(): Promise<void> {
+  // 域清（id 单点互踢根治）：learn/info/教务/webvpn 的会话票全保，只清死域。
+  // 全清曾让重建后各页集体红条几秒（learn/info 会话陪葬要漫游重拉）。
+  await nativeCookieClearDomains(["id.tsinghua.edu.cn", "oauth.tsinghua.edu.cn"]);
 }
 
 export async function nativeFetch(

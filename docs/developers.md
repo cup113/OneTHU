@@ -19,9 +19,13 @@ pnpm dev
 
 `pnpm dev` 只启动 Vite 前端。使用模拟数据浏览界面，不代表已经验证原生网络、文件、凭据或技能 IPC。
 
+桌面端用 `pnpm dev:app`：一条命令起原生壳，前端由 Tauri 的 `beforeDevCommand` 自己拉起，因此不要再单独跑 `pnpm dev`（vite 钉在 5180 且 strictPort，占用会让启动中止）。macOS 走 `.app` wrapper（TCC 只认 bundle），Windows/Linux 走 `tauri dev`；Windows 上还会把 WebView2 数据目录指到仓库内可写的 `node_modules/.cache/onethu-webview2`，避免默认 profile 出现「进程在、窗口不来」。
+
+Windows 上若桌面壳能起、登录也正常，但**什么都不持久化**（运行日志一行不写、导览的权限选择存不住、状态文件不落盘），先用管理员终端重跑一次对比：2026-10-23 本机实录，未提权的未签名 dev exe 写入 `%APPDATA%\app.onethu.desktop` 全部失败（日志、同意协议、状态文件一起丢），提权后立即正常。诊断摘要里的「本机写盘」一行就是结论（`state_write` → `state_read` 回读校验）；打包安装的正式版没有这个问题。
+
 ```bash
-# 桌面 Tauri 开发；Windows 可使用跨平台原始入口
-pnpm --filter @onethu/desktop tauri:raw
+# 桌面端开发（macOS 走 wrapper，Windows/Linux 走 tauri dev）
+pnpm dev:app
 # 前端开发构建 / 桌面原生开发包
 pnpm --filter @onethu/desktop build:dev
 pnpm --filter @onethu/desktop tauri:build:dev
