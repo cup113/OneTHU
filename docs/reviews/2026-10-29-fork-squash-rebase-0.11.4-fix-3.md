@@ -1,11 +1,13 @@
 # 分叉历史再压缩：35 个提交压成 15 个，基线换到上游 0.11.4-fix-3
 
-> 最后更新：2026-10-29 19:20
+> 最后更新：2026-10-29 22:10
 
 日期：2026-10-29。改写前 `main` = `47c00aa9`（35 个提交 + 1 个 PR 合并，基线 `370be7ee`，
-上游 0.11.4-fix-1）。改写后 15 个提交叠在 `upstream/main` = `10e7e4f7`（上游 0.11.4-fix-3）之上。
-回退点：本地 `backup/pre-squash-2026-10-29`（=`47c00aa9`）、本地 `squash/2026-10-29`
-（压缩后、rebase 前，tip `375f4d9e`）。**本次未推送**，远端 `origin/main` 仍是 `47c00aa9`。
+上游 0.11.4-fix-1）。改写后 15 个提交叠在 `upstream/main` = `10e7e4f7`（上游 0.11.4-fix-3）之上，
+随后追加两条红灯修复、CLI 分叉化、复盘与版本跟进（`0.11.4-5`），共 21 个提交。
+回退点：`backup/pre-squash-2026-10-29`（=`47c00aa9`，本地与远端都有）、本地
+`squash/2026-10-29`（压缩后、rebase 前，tip `375f4d9e`）。已按人工核验推送：
+`47c00aa9...9b64a143 main -> main (forced update)`。
 
 ## 为什么先压后换基线
 
@@ -161,5 +163,7 @@ i18n 批次那 96 个文件的语义差异只有两样：`sourceHash` 变化、`
 
 - 改写前：`git update-ref refs/heads/main 47c00aa9`（`backup/pre-squash-2026-10-29` 同指）。
 - rebase 前（压缩后）：`git update-ref refs/heads/main 375f4d9e`。
-- 已推送后：以 `backup/pre-squash-2026-10-29` 为源做一次 `--force-with-lease` 推送。
-- 旧 tag 未动；本次未推 tag，也未推送 `main`。
+- 已推送后：远端有备份分支，回退即
+  `git push --force-with-lease origin backup/pre-squash-2026-10-29:refs/heads/main`。
+- 旧 tag 未动。`fork-0.11.4-5` 由 release 的 publish job 创建，本地不预先打——guard 会把
+  已存在的 tag 判为发版失败。
