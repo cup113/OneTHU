@@ -24,19 +24,25 @@ exec "$dir/node" "$dir/bin/onethu.mjs" "$@"
 `;
 const powershell=`param([Parameter(ValueFromRemainingArguments=$true)][string[]]$CliArgs)
 $ErrorActionPreference='Stop'
-$node=Join-Path $PSScriptRoot 'node.exe'
-if (!(Test-Path -LiteralPath $node)) {
-  $temp=Join-Path $PSScriptRoot ('.node-'+[Guid]::NewGuid().ToString()+'.tmp')
+$node=[IO.Path]::Combine($PSScriptRoot,'node.exe')
+if (![IO.File]::Exists($node)) {
+  $temp=[IO.Path]::Combine($PSScriptRoot,('.node-'+[Guid]::NewGuid().ToString()+'.tmp'))
   try {
-    $inputFile=[IO.File]::OpenRead((Join-Path $PSScriptRoot 'node.gz'))
+    $inputFile=[IO.File]::OpenRead([IO.Path]::Combine($PSScriptRoot,'node.gz'))
     try { $gzip=[IO.Compression.GZipStream]::new($inputFile,[IO.Compression.CompressionMode]::Decompress)
       try { $output=[IO.File]::Create($temp); try {$gzip.CopyTo($output)} finally {$output.Dispose()} } finally {$gzip.Dispose()}
     } finally {$inputFile.Dispose()}
-    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $temp).Hash.ToLowerInvariant() -ne '${meta.nodeSha256}') {throw 'CLI Node checksum failed'}
-    Move-Item -LiteralPath $temp -Destination $node
-  } finally {if(Test-Path -LiteralPath $temp){Remove-Item -LiteralPath $temp}}
+    $sha=[Security.Cryptography.SHA256]::Create()
+    try {
+      $hashInput=[IO.File]::OpenRead($temp)
+      try { $digest=[BitConverter]::ToString($sha.ComputeHash($hashInput)).Replace('-','').ToLowerInvariant() }
+      finally { $hashInput.Dispose() }
+    } finally { $sha.Dispose() }
+    if ($digest -ne '${meta.nodeSha256}') {throw 'CLI Node checksum failed'}
+    [IO.File]::Move($temp,$node)
+  } finally {[IO.File]::Delete($temp)}
 }
-& $node (Join-Path $PSScriptRoot 'bin/onethu.mjs') @CliArgs
+& $node ([IO.Path]::Combine($PSScriptRoot,'bin/onethu.mjs')) @CliArgs
 exit $LASTEXITCODE
 `;
 await writeFile(path.join(source,'onethu'),shell,{mode:0o755});

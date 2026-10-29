@@ -10,6 +10,10 @@ const base=JSON.parse(readFileSync('apps/desktop/src-tauri/tauri.conf.json','utf
 assert(!JSON.stringify(base.bundle.resources).includes('cli-runtime'));
 const prebuild=readFileSync('apps/desktop/scripts/prebuild.mjs','utf8');
 assert.match(prebuild,/if \(process\.env\.ONETHU_BUILD_CLI_PACKAGE === '1'\) execFileSync/);
+const packaging=readFileSync('apps/desktop/scripts/package-cli.mjs','utf8');
+assert(!packaging.includes('Get-FileHash'),'Windows launcher must work without PowerShell module autoloading');
+assert.match(packaging,/\[Security\.Cryptography\.SHA256\]::Create\(\)/);
+assert.match(packaging,/\$sha\.ComputeHash\(\$hashInput\)/);
 const native=readFileSync('apps/desktop/src-tauri/src/cli_daemon.rs','utf8');
 assert.match(native,/let dir = install_dir\(app\)\?/);
 assert(!native.includes('resources/cli-runtime'));
