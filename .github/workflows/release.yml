@@ -213,6 +213,8 @@ jobs:
         run: node --import ./tools/ts-resolve-register.mjs tools/desktop-keepalive-test.mjs
       - name: Check fork build isolation
         run: node tools/fork-build-test.mjs
+      - name: Check fork CLI package sources
+        run: node tools/fork-cli-package-test.mjs
       - name: Check release manifest
         run: node tools/release-manifest-test.mjs
       - name: Check cloud account boundaries
@@ -273,7 +275,13 @@ jobs:
       - name: Verify thin application package
         run: node tools/cli-optional-package-test.mjs
       - name: Build optional CLI package
+        # CLI 包版本必须等于应用版本（应用按此判定可用）。分叉包的版本在
+        # tauri.fork.conf.json，与 packages/cli/package.json 的上游版本不是一条序列，
+        # 所以这里把分叉开关与版本输入传下去（见 apps/desktop/scripts/cli-package-version.mjs）。
         run: node apps/desktop/scripts/package-cli.mjs
+        env:
+          ONETHU_FORK: ${{ inputs.fork && '1' || '' }}
+          ONETHU_FORK_VERSION: ${{ inputs.fork && inputs.version || '' }}
       - name: Verify optional resident runtime
         timeout-minutes: 2
         run: node tools/bundled-cli-startup-test.mjs
@@ -435,6 +443,9 @@ jobs:
             done
             echo
             echo "\`latest.json\` 是按平台的更新清单（含大小与 SHA-256），客户端下载后流式校验。"
+            echo
+            echo "可选 CLI 包（\`OneTHU-CLI_*.zip\`）与本版应用同版本号：桌面端「安装 CLI」会来这里取，"
+            echo "版本不一致的包会被应用判为不可用。"
           } > release-out/NOTES.md
       - name: Publish release
         env:
@@ -443,9 +454,10 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          # 只发三端安装包与清单；便携 exe（onethu.exe）不进 Release
+          # 三端安装包 + 可选 CLI 包（应用按 tag 与资产名精确匹配下载）；便携 exe 不进 Release
           mapfile -t FILES < <(find release-artifacts -type f \
-            \( -name '*.exe' -o -name '*.dmg' -o -name '*.apk' \) | grep -v '/onethu\.exe$')
+            \( -name '*.exe' -o -name '*.dmg' -o -name '*.apk' \
+               -o -name 'OneTHU-CLI_*.zip' -o -name 'OneTHU-CLI_*.zip.sha256' \) | grep -v '/onethu\.exe$')
           printf '%s\n' "${FILES[@]}"
           gh release create "fork-$VERSION" \
             --repo "$GITHUB_REPOSITORY" \

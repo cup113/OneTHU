@@ -8,6 +8,7 @@ import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
+import { resolveCliPackageVersion } from './cli-package-version.mjs';
 
 const scriptDir=path.dirname(fileURLToPath(import.meta.url));
 const root=path.resolve(scriptDir,'../../..');
@@ -30,6 +31,25 @@ const checkedVersion=v=>/^v(?:2[2-9]|[3-9]\d)\.\d+\.\d+$/.test(v);
 const nodeVersion=process.env.ONETHU_CLI_NODE_VERSION??(checkedVersion(process.version)?process.version:'v22.22.1');
 if(!checkedVersion(nodeVersion)) throw Error('ONETHU_CLI_NODE_VERSION must be an exact Node >=22 version.');
 const nodeName=platform==='win32'?'node.exe':'node';
+/** SDK 把版本编进 bundle，`daemon.status` 报的就是它；分叉包版本与上游不是一条序列。
+ *  打包期间替换这一行常量，构建完还原（被别处改动过就不覆盖，只报错让人核对）。 */
+const SDK_INDEX=path.join(root,'packages/sdk/src/index.ts');
+const SDK_VERSION_LINE=/^export const VERSION = '([^']+)';$/m;
+async function withSdkVersion(version,build) {
+  const source=await readFile(SDK_INDEX,'utf8');
+  const match=SDK_VERSION_LINE.exec(source);
+  if(!match) throw Error('packages/sdk/src/index.ts: VERSION 行形状变了，无法注入 CLI 包版本');
+  if(match[1]===version) return build();
+  const patched=source.replace(SDK_VERSION_LINE,`export const VERSION = '${version}';`);
+  await writeFile(SDK_INDEX,patched);
+  try {
+    return await build();
+  } finally {
+    const current=await readFile(SDK_INDEX,'utf8');
+    if(current===patched) await writeFile(SDK_INDEX,source);
+    else console.error(`✗ ${SDK_INDEX} 在打包期间被改动，未自动还原（应为 ${version}）`);
+  }
+}
 
 async function download(url) {
   const response=await fetch(url,{signal:AbortSignal.timeout(120000),redirect:'error'});
@@ -97,7 +117,10 @@ async function nodeRuntime() {
 await rm(staging,{recursive:true,force:true});
 await mkdir(staging,{recursive:true});
 try {
-  execFileSync(process.execPath,[path.join(root,'packages/cli/scripts/build.mjs')],{cwd:root,stdio:'inherit'});
+  const {version:packageVersion,source:versionSource}=resolveCliPackageVersion();
+  // daemon.status 报的是 SDK 里编译进去的 VERSION 常量（packages/sdk/src/index.ts），
+  // 光改包内 package.json 不够：打包期间把它换成应用版本，构建结束原样还原。
+  await withSdkVersion(packageVersion,()=>execFileSync(process.execPath,[path.join(root,'packages/cli/scripts/build.mjs')],{cwd:root,stdio:'inherit'}));
   const node=await nodeRuntime();
   for(const item of ['package.json','bin','src','scripts','dist','README.md','README.en.md','LICENSE','LICENSES']) {
     await cp(path.join(root,'packages/cli',item),path.join(staging,item),{recursive:true,filter:file=>!path.basename(file).startsWith('._')});
@@ -105,6 +128,17 @@ try {
   await cp(node.binary,path.join(staging,nodeName));
   await chmod(path.join(staging,nodeName),0o755);
   await cp(node.license,path.join(staging,'LICENSES','NODE-LICENSE'));
+  // 版本对齐：应用按「已安装包版本 == 应用版本」判定可用（见 scripts/cli-package-version.mjs）。
+  // 分叉构建把包内 package.json 的版本改成应用版本，CLI 自报版本、runtime.json 与 zip 文件名
+  // 三处才对得上——只改 runtime.json 会让 CLI 进程自报上游版本，daemon 握手仍被判不兼容。
+  const stagedPackage=path.join(staging,'package.json');
+  const staged=JSON.parse(await readFile(stagedPackage,'utf8'));
+  if(staged.version!==packageVersion){
+    const original=staged.version;
+    staged.version=packageVersion;
+    await writeFile(stagedPackage,JSON.stringify(staged,null,2)+'\n');
+    console.log(`CLI package version: ${original} → ${packageVersion} (from ${versionSource})`);
+  }
   if(platform==='darwin') execFileSync('codesign',['--force','--sign','-',path.join(staging,nodeName)],{stdio:'pipe'});
   // Keep Node as data during app signing so nested Mach-O resigning cannot
   // invalidate the installer's digest. The compressed resource also shrinks the app.
