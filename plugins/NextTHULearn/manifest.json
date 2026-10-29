@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "OneTHU NextTHULearn",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "以 OneTHU 石墨风格浏览网络学堂。",
   "content_scripts": [{
     "matches": ["https://learn.tsinghua.edu.cn/f/*"],

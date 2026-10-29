@@ -8,3 +8,11 @@ assert.equal(rows[0].courseIndex,2);assert.deepEqual(rows[0].timeAndLocation,['å
 assert.deepEqual(rows[0].summary,{unreadNotices:0,unreadFiles:3,pendingHomework:4});
 assert.deepEqual(rows[1].summary,{});
 console.log('official counters, course index and schedule preserved; missing counters remain unknown');
+const {deadlineInfo}=await import('../src/deadline.js');
+const now=new Date(2026,9,29,12).getTime();
+assert.equal(deadlineInfo('2026-10-29 11:00',false,now).tone,'urgent');
+assert.equal(deadlineInfo('2026-10-29 18:00',false,now).tone,'soon');
+assert.equal(deadlineInfo('2026-10-31 12:00',false,now).tone,'upcoming');
+assert.equal(deadlineInfo('2026-10-29 11:00',true,now).tone,'neutral');
+assert.equal(deadlineInfo('invalid',false,now).label,'');
+console.log('deadline colors preserve submitted and unknown states');
