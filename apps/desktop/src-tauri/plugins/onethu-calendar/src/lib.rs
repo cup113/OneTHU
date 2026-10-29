@@ -57,6 +57,9 @@ pub struct SyncPayload {
 pub struct SyncResult {
     pub added: u32,
     pub removed: u32,
+    /// 内容未变、本次一次 provider 都没碰的条数（差异同步才有；0 表示全部重写）
+    #[serde(default)]
+    pub unchanged: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
 }
@@ -81,7 +84,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::supported,
             commands::request_permission,
             commands::sync,
-            commands::remove_calendar
+            commands::remove_calendar,
+            commands::sync_trace
         ])
         .setup(|app, api| {
             #[cfg(not(target_os = "android"))]
