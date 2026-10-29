@@ -38,6 +38,9 @@ jobs:
         with:
           targets: aarch64-linux-android
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop/src-tauri
