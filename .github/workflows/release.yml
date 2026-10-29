@@ -142,7 +142,11 @@ jobs:
           SCCACHE_GHA_ENABLED: "true"
           TAURI_SIGNING_PRIVATE_KEY: ""
           TRACE_AMAP_KEY: ${{ secrets.TRACE_AMAP_KEY }}
-      - name: Verify bundled resident runtime
+      - name: Verify thin application package
+        run: node tools/cli-optional-package-test.mjs
+      - name: Build optional CLI package
+        run: node apps/desktop/scripts/package-cli.mjs
+      - name: Verify optional resident runtime
         timeout-minutes: 2
         run: node tools/bundled-cli-startup-test.mjs
       - name: Record frozen source
@@ -153,6 +157,8 @@ jobs:
           name: onethu-${{ matrix.os }}
           path: |
             release-source.json
+            output/cli-package/*.zip
+            output/cli-package/*.sha256
             apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
             apps/desktop/src-tauri/target/release/onethu.exe
             apps/desktop/src-tauri/target/**/*.dmg

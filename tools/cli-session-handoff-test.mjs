@@ -11,6 +11,7 @@ const mergeNode=sharedAst.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name
 const mergeCode=ts.transpileModule(mergeNode.getText(sharedAst).replace(/^export\s+/,''),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
 const mergeSameAccountServiceCookies=new Function(mergeCode+';return mergeSameAccountServiceCookies;')();
 function functionsAt(path, names, env, imports = {}, setup = '', result = `{${names.join(',')}}`) {
+  env={initCliInstallation:async()=>{},...env};
   const ast = ts.createSourceFile(path, source(path), ts.ScriptTarget.Latest, true);
   const selected = names.map(name => {
     const fn = ast.statements.find(item => ts.isFunctionDeclaration(item) && item.name?.text === name);
