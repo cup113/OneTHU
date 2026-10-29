@@ -3,6 +3,8 @@ import type { LocaleDef } from "../types.js";
 const locale = {
   "label": "简体中文",
   "messages": {
+    "learn.course.unreadNotices": "未读通知 {count}",
+    "learn.course.unreadFiles": "未读文件 {count}",
     "app.08566a4b57a3": "云盘已自动连接：{value}",
     "app.4d6e46fec3d4": "正在恢复登录状态…",
     "board.edit.restore": "恢复默认",

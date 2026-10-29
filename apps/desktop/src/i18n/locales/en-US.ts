@@ -3,6 +3,8 @@ import type { LocaleDef } from "../types.js";
 const locale = {
   "label": "English",
   "messages": {
+    "learn.course.unreadNotices": "{count} unread notices",
+    "learn.course.unreadFiles": "{count} unread files",
     "app.08566a4b57a3": "Cloud Drive connected automatically: {value}",
     "app.4d6e46fec3d4": "Restoring your sign-in session…",
     "board.edit.restore": "Restore defaults",
