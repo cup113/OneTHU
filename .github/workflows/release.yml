@@ -124,6 +124,10 @@ jobs:
           node --import ./tools/ts-resolve-register.mjs tools/update-language-test.mjs
           node tools/update-check-lifecycle-test.mjs
           node --import ./tools/ts-resolve-register.mjs tools/news-language-test.mjs
+      - name: Check schedule navigation and viewport policy
+        run: |
+          node tools/schedule-week-swipe-test.mjs
+          node tools/pc-layout-test.mjs
       - name: Check mobile interaction state
         run: |
           node --import ./tools/ts-resolve-register.mjs tools/mobile-layout-test.mjs

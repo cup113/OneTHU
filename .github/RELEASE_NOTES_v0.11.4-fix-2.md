@@ -1,5 +1,6 @@
 # OneTHU 0.11.4-fix-2 · Revolution
 
+- 日程：修复课表底部留白，随窗口铺满；电脑滚轮上/下切周，手机左右滑动随手移动，整周连续过渡。
 - MadModel：对照 DSH 插件调整慢响应预算、有效凭据后台续签、进程内请求排队与限流退避。模糊超时及已经开始输出的请求不会自动重放。
 - OH：应用内查询、日程和任务管理独立于外部 CLI 开关；手机可直接访问已授权服务。
 - 数据：GUI 与常驻 CLI 共享账号日程和邮箱配置，保护迁移、离线编辑和并发修改；已授权云盘与雨课堂连接私有同步。
@@ -10,6 +11,7 @@
 
 # OneTHU 0.11.4-fix-2 · Revolution
 
+- Schedule: fill the available viewport; use the desktop wheel to change weeks and horizontal touch swipes on phones, with continuous whole-week transitions.
 - MadModel: DSH-aligned response budgets, background renewal of usable tokens, a process-wide school-provider lane and rate-limit backoff. Ambiguous timeouts and responses that have begun producing output are not replayed.
 - OH: in-app services and task management work independently of external CLI access, including on phones.
 - Data: GUI and resident CLI share account calendar events and mailbox configuration, with migration, offline-edit merging and revision checks. Authorized cloud and Rain Classroom connections use a private bridge.
