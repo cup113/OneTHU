@@ -422,7 +422,7 @@ jobs:
             --version "$VERSION" \
             --out release-out/latest.json \
             --releasedAt "$(date -u +%F)" \
-            --notes "分叉 $VERSION：网络学堂的失败归因修正——附件预览不再把 404 说成「登录失效」（登录墙、网关页、普通 HTML 三分，非 2xx 如实报 HTTP 状态；地址末段为空的不再产出附件，.html 附件可预览）；已批阅或已过期的作业不再因提交页被拒而整页报错，正文与附件照常显示。基线仍是上游 0.11.4-fix-1（会话恢复、daemon 启动诊断、私有目录 ACL），分叉保留凭据文件属主接受 Administrators、系统日历同步轨迹的诊断权限、托盘/悬浮球保活、系统日历差异同步与自定义日程重复规则。更新源仍指向 cup113/OneTHU。"
+            --notes "分叉 $VERSION：基线换到上游 0.11.4-fix-3——CLI 运行时改为可选分包（桌面端「安装 CLI」从本仓 Release 取与安装包同版本的 CLI 包，装不上的版本会被应用判为不可用）、周导航滑动与视口铺满、会话恢复与更新 epoch 修正、Windows 启动器不再依赖 PowerShell 模块。分叉侧新增全天事件横幅行（方案 A：落星期列、跨天连续、超出道次折叠成 +N）；网络学堂失败归因修正延续——附件 404 不再说成「登录失效」，已批阅/已过期作业不再因提交页被拒而整页报错；保留凭据文件属主接受 Administrators、系统日历同步诊断权限、托盘/悬浮球保活、系统日历差异同步与自定义日程重复规则。更新源仍指向 cup113/OneTHU。"
       - name: Write release notes
         env:
           VERSION: ${{ inputs.version }}
