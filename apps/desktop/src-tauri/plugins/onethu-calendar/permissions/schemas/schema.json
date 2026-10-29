@@ -343,10 +343,22 @@
           "markdownDescription": "Denies the sync command without any pre-configured scope."
         },
         {
-          "description": "允许使用系统日历原生同步：\n查询支持平台、请求日历权限、写入/清理 OneTHU 专属日历事件、移除该日历。\n\n#### This default permission set includes:\n\n- `allow-supported`\n- `allow-request-permission`\n- `allow-sync`\n- `allow-remove-calendar`",
+          "description": "Enables the sync_trace command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-sync-trace",
+          "markdownDescription": "Enables the sync_trace command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sync_trace command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-sync-trace",
+          "markdownDescription": "Denies the sync_trace command without any pre-configured scope."
+        },
+        {
+          "description": "允许使用系统日历原生同步：\n查询支持平台、请求日历权限、写入/清理 OneTHU 专属日历事件、移除该日历、读取同步轨迹。\n\n#### This default permission set includes:\n\n- `allow-supported`\n- `allow-request-permission`\n- `allow-sync`\n- `allow-remove-calendar`\n- `allow-sync-trace`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "允许使用系统日历原生同步：\n查询支持平台、请求日历权限、写入/清理 OneTHU 专属日历事件、移除该日历。\n\n#### This default permission set includes:\n\n- `allow-supported`\n- `allow-request-permission`\n- `allow-sync`\n- `allow-remove-calendar`"
+          "markdownDescription": "允许使用系统日历原生同步：\n查询支持平台、请求日历权限、写入/清理 OneTHU 专属日历事件、移除该日历、读取同步轨迹。\n\n#### This default permission set includes:\n\n- `allow-supported`\n- `allow-request-permission`\n- `allow-sync`\n- `allow-remove-calendar`\n- `allow-sync-trace`"
         }
       ]
     }
