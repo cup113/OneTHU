@@ -184,4 +184,18 @@ await test("long reminder lead remains inside the declared native window", async
   const p = f.nativeWrites()[0].args.payload; const hw = p.events.find((e) => e.title.includes("作业截止"));
   assert.ok(hw.startMs >= p.windowStartMs); assert.ok(hw.endMs <= p.windowEndMs);
 });
+await test("recurring manual events expand into flat instances inside the rolling window", async () => {
+  // 编辑器创作侧（每周三、永不截止）经 systemCal 的既定路径：18 个月滚动窗口内平铺展开，
+  // 不写原生 RRULE（ADR-0001）；实例数以真实窗口边界自洽计算。
+  const first = Date.parse("2026-10-21T08:00:00+08:00"); // 周三
+  const weekly = { uid: "weekly-flat", summary: "weekly-flat", start: first, end: first + 3600000, onethuSource: "manual", rrule: { freq: "WEEKLY", interval: 1, byDay: ["WE"] } };
+  const f = fixture({ local: [event("manual-local"), weekly] }); await f.api.syncSystemCalendar();
+  const p = f.nativeWrites()[0].args.payload;
+  const flat = p.events.filter((e) => e.title === "weekly-flat");
+  let expected = 0; for (let t = first; t <= p.windowEndMs; t += 7 * day) expected++;
+  assert.equal(flat.length, expected, "flat instance count matches the actual window bound");
+  assert.ok(flat.length > 70 && flat.length < 90, `instance count sane (${flat.length})`);
+  assert.ok(flat.every((e) => e.startMs <= p.windowEndMs && e.endMs >= p.windowStartMs), "every instance inside the window");
+  assert.ok(p.events.length < 4000, "MAX_EVENTS headroom holds with an endless series");
+});
 console.log(`\n${passed} system calendar tests passed; native/network writes were mocked.`);
