@@ -4,6 +4,8 @@
 
 The schedule combines courses, available assignment deadlines, custom events and configured calendar data. Assignment visibility is not exclusive to full mode. Check the same week and data source when comparing modes.
 
+All-day events sit in a banner row under the weekday columns: multi-day events span their days, daily repeats merge into one bar, and per-column overflow folds into +N. Selecting a bar or a folded item opens the event editor.
+
 Custom events support repeat rules in the editor: daily, weekly, biweekly or monthly (weekly variants pick weekdays), ending never or on an inclusive end date. Saving and deleting apply to the whole series. Course export and system-calendar output expand repeats into individual instances; native RRULE is not written to the system calendar (see ADR-0001, Chinese). Yearly (YEARLY) rules are outside the parsing scope and import as a single first occurrence.
 
 Use timeline or list views as appropriate. Lists must scroll to the final item with the bottom controls visible. Assignment actions open the assignment in a new tab; course actions can open the learning-platform course or its trace page, according to available data and mode navigation.

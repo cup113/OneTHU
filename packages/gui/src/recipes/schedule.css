@@ -144,11 +144,16 @@ html:root.is-schedule-page .schedule-workspace > .schedule-stage {
   scroll-padding-block: var(--og-space-3);
 }
 
-.schedule-day-head {
+/* 表头 + 全天横幅行：一起吸顶（整块高度由页面量成 availH 的减项），
+   7 列与下面的时间轴共用同一列网格。 */
+.schedule-head {
   flex: none;
   position: sticky;
   top: 0;
   z-index: var(--og-z-header);
+  background: var(--og-surface-1);
+}
+.schedule-day-head {
   padding-block: var(--og-space-3) var(--og-space-2);
   background: var(--og-surface-1);
   border-bottom: 1px solid var(--og-line-2);
@@ -179,6 +184,72 @@ html:root.is-schedule-page .schedule-workspace > .schedule-stage {
 .schedule-day-cell:first-child { border-left: 0; }
 .schedule-day-cell.is-today,
 .schedule-day-cell.is-today small { color: var(--og-accent-strong); }
+
+/* ── 2.1 全天横幅行：横幅落在星期列上，跨天连续、每日重复合并、逐列 +N ──
+   行高取胶囊高度令牌（24px），步进 = 行高 + 4px；可见道数由页面给（桌面 3 / 手机 2）。
+   几何（left/width/top）由页面按列百分比算，这里只管外观。 */
+.schedule-allday {
+  --og-c-schedule-allday-step: calc(var(--og-ctl-chip-h-sm) + var(--og-space-1));
+  /* 横幅与列边界之间的留白；手机列窄，收到 2px 多让一个字给标题 */
+  --og-c-schedule-allday-inset: var(--og-space-1);
+  display: flex;
+  border-bottom: 1px solid var(--og-line-1);
+  background: var(--og-surface-1);
+}
+/* 「全天」沟槽标：贴第一行顶部对齐，不随行数上下浮动 */
+.schedule-allday-gutter {
+  flex: none;
+  width: var(--og-space-8);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: calc(var(--og-space-1) / 2);
+  font-size: var(--og-text-micro);
+  line-height: var(--og-ctl-chip-h-sm);
+  color: var(--og-content-3);
+}
+.schedule-allday-layer {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  /* 行数（含 +N 那一行）由页面写成自定义属性；高度必须与横幅的 top 同源 */
+  height: calc(
+    (var(--og-c-schedule-allday-rows, 0) + var(--og-c-schedule-allday-overflow, 0))
+      * var(--og-c-schedule-allday-step)
+    + var(--og-space-1)
+  );
+}
+/* 列刻线 / 今天微底色：与画布的 .schedule-col 同一口径，空列也看得见网格 */
+.schedule-allday-day {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-left: 1px solid var(--og-line-1);
+  pointer-events: none;
+}
+.schedule-allday-day:first-child { border-left: 0; }
+.schedule-allday-day.is-today { background: color-mix(in srgb, var(--og-accent) 6%, transparent); }
+
+.schedule-allday-slot,
+.schedule-allday-more-slot { position: absolute; display: flex; z-index: 1; }
+.schedule-allday-slot > .schedule-allday-banner { width: 100%; min-width: 0; }
+/* 横幅只有一种外观：全天事件是同一种东西，来源（云/本）不是扫描时该读的维度。
+   毛玻璃在整条带上要画 N 个，去掉；墨色压到正文级，窄列上才读得清。 */
+.schedule-allday-banner {
+  --og-c-chip-ink: var(--og-content-1);
+  backdrop-filter: none;
+  background-image: none;
+}
+/* 溢出指示器：描边胶囊，落在自己的一行上（不压任何横幅） */
+.schedule-allday-more {
+  --og-c-chip-fill: var(--og-surface-1);
+  --og-c-chip-ink: var(--og-content-3);
+  --og-c-chip-line: var(--og-line-2);
+}
+.schedule-allday-more:hover {
+  --og-c-chip-ink: var(--og-content-1);
+  --og-c-chip-line: var(--og-content-3);
+}
 
 .schedule-gutter { position: relative; }
 .schedule-gutter-label {
@@ -334,6 +405,10 @@ html:root.is-phone .schedule-timeline { scroll-padding-top: var(--og-space-3); }
 html:root.is-phone .schedule-day-head { padding-block: var(--og-space-2) var(--og-space-1); }
 html:root.is-phone .schedule-gutter,
 html:root.is-phone .schedule-head-gutter { width: var(--og-space-7); }
+/* 手机 7 列只有 ~51px：留白与内边距一起收紧，标题多让出两三个字（更长的看 +N / 编辑器） */
+html:root.is-phone .schedule-allday { --og-c-schedule-allday-inset: calc(var(--og-space-1) / 2); }
+html:root.is-phone .schedule-allday-gutter { width: var(--og-space-7); }
+html:root.is-phone .schedule-allday-banner { --og-c-chip-pad: 0; }
 html:root.is-phone .schedule-block { padding: 1px calc(var(--og-space-1) / 2); }
 /* 手机 7 列很窄：块里只留课程名（最多两行），地点/教师点开详情看 */
 html:root.is-phone .schedule-block-title { font-size: var(--og-text-micro); line-height: 1.25; }

@@ -55,7 +55,7 @@ export interface ChipProps extends OneBase {
 }
 
 /** 胶囊：筛选、标签、快速入口共用（高度与圆角走 --r-pill 家族） */
-export function Chip({ tone = "neutral", size = "md", icon, onClick, selected, disabled, onRemove, scope, className, children }: ChipProps): ReactNode {
+export function Chip({ tone = "neutral", size = "md", icon, onClick, selected, disabled, onRemove, scope, className, titleAttr, "aria-label": ariaLabel, children }: ChipProps): ReactNode {
   const { t: guiText } = useOneGUILocale();
   const cls = cx(
     one("chip").size(size).tone(tone === "neutral" ? undefined : tone).state("selected", selected).state("disabled", disabled).toString(),
@@ -68,14 +68,16 @@ export function Chip({ tone = "neutral", size = "md", icon, onClick, selected, d
   </>;
   // Interactive chips are real buttons: keyboard, focus and disabled behavior
   // come from the browser. Removable chips use sibling buttons, never nesting.
+  // OneBase 的 titleAttr / aria-label 必须真的到 DOM：日程全天行的 +N 只有「+3」两个字，
+  // 无障碍名全靠 aria-label；此前 Chip 声明了这两个属性却把它们丢掉。
   if (onClick && !onRemove) return (
-    <button type="button" {...scopeProps(scope)} className={cls} onClick={onClick} disabled={disabled} aria-pressed={selected}>
+    <button type="button" {...scopeProps(scope)} className={cls} onClick={onClick} disabled={disabled} aria-pressed={selected} title={titleAttr} aria-label={ariaLabel}>
       {label}
     </button>
   );
   return (
-    <span {...scopeProps(scope)} className={cls} aria-disabled={disabled || undefined}>
-      {onClick ? <button type="button" className="og-chip-main og-interactive" onClick={onClick} disabled={disabled} aria-pressed={selected}>{label}</button> : label}
+    <span {...scopeProps(scope)} className={cls} aria-disabled={disabled || undefined} title={titleAttr} aria-label={ariaLabel}>
+      {onClick ? <button type="button" className="og-chip-main og-interactive" onClick={onClick} disabled={disabled} aria-pressed={selected} title={titleAttr} aria-label={ariaLabel}>{label}</button> : label}
       {onRemove ? (
         <button type="button" className="og-chip-x" aria-label={guiText("gui.action.remove")} disabled={disabled} onClick={(e) => { e.stopPropagation(); onRemove(); }}>×</button>
       ) : null}
