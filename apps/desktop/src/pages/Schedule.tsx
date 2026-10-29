@@ -15,6 +15,7 @@ import {
   Input,
   KeyValue,
   List,
+  Menu,
   Modal,
   Popover,
   Row,
@@ -70,6 +71,7 @@ import { useNotifyBackend } from "../components/useNotifyBackend.js";
 import { openLocalPath } from "../lib/localFile.js";
 import { scheduleHomework, type ScheduleHomework } from "../lib/scheduleHomework.js";
 import { calendarDraftRange } from "../lib/calendarDraft.js";
+import { ALLDAY_ROWS_DESKTOP, ALLDAY_ROWS_PHONE, layoutAllDay, weekDaySpan, type AllDayOccurrence } from "../lib/alldayLayout.js";
 import { appendSecondarySchedule } from "../lib/scheduleSecondary.js";
 
 const DAY_NAMES = i18nList(["pages.schedule.c430f4c12eaa","pages.schedule.d1378a68e620","pages.schedule.2961168962be","pages.schedule.e9d3b01a5a00","pages.schedule.572388f3b096","pages.schedule.f9aa11dbb15c","pages.schedule.ee239f394329"]);
@@ -108,6 +110,12 @@ const parseYmd = (s: string): Date => new Date(Number(s.slice(0, 4)), Number(s.s
 const mondayOf = (d: Date): Date => new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() + 6) % 7));
 const MIN_ANCHOR = new Date(1970, 0, 5);
 const MAX_ANCHOR = new Date(2099, 11, 28);
+/** 校园墙钟日序号（自 epoch 起的天数）：全天事件按校园日历日归属，不随设备时区漂移。
+ *  与表头日期用同一坐标系：表头日期由本地 Date 的年月日给出，这里也按年月日折算。 */
+const campusDayIndex = (ms: number): number => {
+  const w = caldav.epochToWall("Asia/Shanghai", ms);
+  return Math.round(Date.UTC(w.y, w.mo - 1, w.d) / 86_400_000);
+};
 
 /** 网格条目（课表条目 + 云/本日程事件） */
 interface GridEntry {
@@ -595,11 +603,12 @@ export function SchedulePage() {
     const w = caldav.epochToWall("Asia/Shanghai", ms);
     return `${padN(w.h)}:${padN(w.mi)}`;
   };
-  /** 时间轴条目 = 日期窗课程（考试标红）+ 云/本日程展开（全天走芯片行） */
-  const { entries, allDayChips } = useMemo<{ entries: GridEntry[]; allDayChips: Array<{ label: string; src: "cloud" | "local"; uid?: string }> }>(() => {
+  /** 时间轴条目 = 日期窗课程（考试标红）+ 云/本日程展开（全天单独进横幅行） */
+  const { entries, allDayOcc } = useMemo<{ entries: GridEntry[]; allDayOcc: AllDayOccurrence[] }>(() => {
     const [loD, hiD] = viewWindow;
     const lo = new Date(loD.getFullYear(), loD.getMonth(), loD.getDate()).getTime();
     const hi = new Date(hiD.getFullYear(), hiD.getMonth(), hiD.getDate()).getTime() + 86_399_999;
+    const weekStartDay = Math.round(Date.UTC(loD.getFullYear(), loD.getMonth(), loD.getDate()) / 86_400_000);
     const raw = (windowRows ?? campus.data?.schedule ?? []) as Array<GridEntry & { category?: string }>;
     const inWeek: GridEntry[] = raw
       .map((e) => ({ ...e, src: e.category?.includes("考试") ? ("exam" as const) : e.src }))
@@ -608,7 +617,7 @@ export function SchedulePage() {
         const t = parseYmd(e.date).getTime();
         return t >= lo && t <= hi;
       });
-    const chips: Array<{ label: string; src: "cloud" | "local"; uid?: string }> = [];
+    const allDay: AllDayOccurrence[] = [];
     const WD_INDEX = (ms: number): number => {
       const w = caldav.epochToWall("Asia/Shanghai", ms);
       return (new Date(Date.UTC(w.y, w.mo - 1, w.d)).getUTCDay() + 6) % 7;
@@ -616,7 +625,11 @@ export function SchedulePage() {
     for (const [evts, src] of [[cal.cloudEvents, "cloud"], [cal.localEvents, "local"]] as const) {
       for (const o of caldav.expandEventSet(evts, lo, hi)) {
         if (o.allDay) {
-          chips.push({ label: o.summary, src, uid: o.uid });
+          // 全天不展开成块：投影到周内天下标交给横幅行（列表视图不需要）
+          if (mode === "timetable") {
+            const span = weekDaySpan(o.start, o.end, campusDayIndex, weekStartDay);
+            if (span) allDay.push({ uid: o.uid, summary: o.summary, src, ...span });
+          }
           continue;
         }
         for (let start = Math.max(o.start, lo); start < Math.min(o.end, hi + 1);) {
@@ -638,8 +651,18 @@ export function SchedulePage() {
     }
     // 重叠缩略：≥3 件重叠合并成"N 件事"簇块（扫描线极大区间）
     const clustered = clusterize(inWeek);
-    return { entries: clustered, allDayChips: chips };
-  }, [uiLocale, viewWindow, windowRows, campus.data, cal.cloudEvents, cal.localEvents, deadlines]);
+    return { entries: clustered, allDayOcc: allDay };
+  }, [uiLocale, mode, viewWindow, windowRows, campus.data, cal.cloudEvents, cal.localEvents, deadlines]);
+
+  /** 全天横幅行：可见道次上限按端（桌面 3 / 手机 2），超出的按列折叠成 +N */
+  const allDayCap = phoneUi ? ALLDAY_ROWS_PHONE : ALLDAY_ROWS_DESKTOP;
+  const allday = useMemo(
+    () => layoutAllDay(allDayOcc, allDayCap),
+    [uiLocale, allDayOcc, allDayCap],
+  );
+  /** +N 弹层：记下被点的那颗胶囊（Menu 自己负责落位、Esc、点外关闭） */
+  const [allDayMore, setAllDayMore] = useState<{ day: number; el: HTMLElement } | null>(null);
+  useEffect(() => { setAllDayMore(null); }, [weekStart, mode]);
 
   /* ── 铺满：可用高度 → 坐标轴（先定轴，layout/裁剪/渲染都跟着走） ── */
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -666,7 +689,7 @@ export function SchedulePage() {
       ro.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, [mode, allDayChips.length, panelOpen]);
+  }, [mode, allday.visibleRows, allday.hasOverflow, panelOpen]);
 
   /** 收紧后的显示区间 + 每分钟像素：整周课表一屏放完（见 fitAxis） */
   const axis = useMemo(() => fitAxis(entries, win, availH), [uiLocale, entries, win, availH]);
@@ -1237,32 +1260,82 @@ export function SchedulePage() {
           </div>
         ) : (
           <>
-            {/* 全天日程芯片（不进事件轴；有时才出现，占一行） */}
-            {allDayChips.length > 0 ? (
-              <div className="schedule-chip-row">
-                {allDayChips.slice(0, 8).map((c, i) => (
-                  <Chip
-                    key={i}
-                    size="sm"
-                    tone={c.src === "cloud" ? "success" : "neutral"}
-                    onClick={c.uid ? () => onBlockClick({ courseName: c.label, src: c.src, uid: c.uid }) : undefined}
-                  >{i18nRich("pages.schedule.be7a93a8502e", { label: c.label })}</Chip>
-                ))}
-              </div>
-            ) : null}
-
             <div className="schedule-timeline" ref={scrollRef}>
-            {/* 表头：**一周 7 列**（吸顶）；今天整列高亮 */}
-            <div className="schedule-day-head" ref={headRef}>
-              <div className="schedule-head-gutter" />
-              <div className="schedule-day-strip">
-                {DAY_NAMES.map((name, i) => (
-                  <div key={name} className={"schedule-day-cell" + (inCurrentWeek && i === todayIdx ? " is-today" : "")}>
-                    {name}
-                    <small>{dayDates[i]}</small>
-                  </div>
-                ))}
+            {/* 表头 + 全天横幅行：一起吸顶，7 列与时间轴共用同一列网格；行高一并计入 availH */}
+            <div className="schedule-head" ref={headRef}>
+              <div className="schedule-day-head">
+                <div className="schedule-head-gutter" />
+                <div className="schedule-day-strip">
+                  {DAY_NAMES.map((name, i) => (
+                    <div key={name} className={"schedule-day-cell" + (inCurrentWeek && i === todayIdx ? " is-today" : "")}>
+                      {name}
+                      <small>{dayDates[i]}</small>
+                    </div>
+                  ))}
+                </div>
               </div>
+              {/* 全天横幅：落星期列、跨天连续、每日重复合并；超出道次按列折叠成 +N */}
+              {allday.spans.length > 0 ? (
+                <div className="schedule-allday">
+                  <div className="schedule-allday-gutter">{i18n("pages.schedule.0b97c851e4a7")}</div>
+                  <div
+                    className="schedule-allday-layer"
+                    style={{
+                      "--og-c-schedule-allday-rows": String(allday.visibleRows),
+                      "--og-c-schedule-allday-overflow": allday.hasOverflow ? "1" : "0",
+                    } as CSSProperties}
+                  >
+                    {DAY_NAMES.map((_, day) => (
+                      <div
+                        key={`allday-col-${day}`}
+                        className={"schedule-allday-day" + (inCurrentWeek && day === todayIdx ? " is-today" : "")}
+                        style={{ left: `${(day * 100) / WEEK_COLUMNS}%`, width: `${100 / WEEK_COLUMNS}%` }}
+                      />
+                    ))}
+                    {allday.spans.filter((s) => s.lane < allDayCap).map((s) => {
+                      const left = (s.d0 * 100) / WEEK_COLUMNS;
+                      const width = ((s.d1 - s.d0 + 1) * 100) / WEEK_COLUMNS;
+                      const range = s.d1 > s.d0 ? `${dayDates[s.d0]}–${dayDates[s.d1]}` : dayDates[s.d0];
+                      return (
+                        <span
+                          key={`allday-${s.uid}-${s.d0}`}
+                          className="schedule-allday-slot"
+                          style={{
+                            left: `calc(${left}% + var(--og-c-schedule-allday-inset))`,
+                            width: `calc(${width}% - var(--og-c-schedule-allday-inset) * 2)`,
+                            top: `calc(${s.lane} * var(--og-c-schedule-allday-step) + calc(var(--og-space-1) / 2))`,
+                          }}
+                        >
+                          <Chip
+                            size="sm"
+                            className="schedule-allday-banner"
+                            titleAttr={`${range} · ${s.summary}`}
+                            onClick={() => onBlockClick({ courseName: s.summary, src: s.src, uid: s.uid })}
+                          >{s.summary}</Chip>
+                        </span>
+                      );
+                    })}
+                    {allday.hidden.map((list, day) => list.length === 0 ? null : (
+                      <span
+                        key={`allday-more-${day}`}
+                        className="schedule-allday-more-slot"
+                        style={{
+                          left: `calc(${(day * 100) / WEEK_COLUMNS}% + var(--og-c-schedule-allday-inset))`,
+                          top: `calc(var(--og-c-schedule-allday-rows) * var(--og-c-schedule-allday-step) + calc(var(--og-space-1) / 2))`,
+                        }}
+                      >
+                        <Chip
+                          size="sm"
+                          className="schedule-allday-more"
+                          aria-label={`${DAY_NAMES[day]} ${dayDates[day]} · ${i18n("pages.schedule.0b97c851e4a7")} +${list.length}`}
+                          titleAttr={`${DAY_NAMES[day]} ${dayDates[day]}`}
+                          onClick={(e) => setAllDayMore({ day, el: e.currentTarget })}
+                        >{`+${list.length}`}</Chip>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             <div className="schedule-body">
@@ -1278,8 +1351,8 @@ export function SchedulePage() {
 
               {/* 画布 */}
               <div className="schedule-canvas" style={{ height: canvasH }}>
-                {/* 空周提示（网格照常渲染，提示浮于其上不挡交互） */}
-                {entries.length === 0 ? (
+                {/* 空周提示（网格照常渲染，提示浮于其上不挡交互）；有全天横幅时不算空 */}
+                {entries.length === 0 && (winLoading || allday.spans.length === 0) ? (
                   <div className="schedule-empty">
                     <Surface overlay radius="sm" pad="sm">
                       <Text tone="faint">{winLoading ? i18n("pages.schedule.48cbf2cb0bd7") : i18n("pages.schedule.310a9aa08211")}</Text>
@@ -1375,6 +1448,18 @@ export function SchedulePage() {
               </div>
             </div>
             </div>
+            {/* +N 弹层：被折叠的全天事件清单，点条目直接开事件编辑器 */}
+            <Menu
+              open={allDayMore !== null}
+              onClose={() => setAllDayMore(null)}
+              anchor={allDayMore?.el}
+              title={allDayMore ? `${DAY_NAMES[allDayMore.day]} ${dayDates[allDayMore.day]} · ${i18n("pages.schedule.0b97c851e4a7")}` : undefined}
+              items={allDayMore ? (allday.hidden[allDayMore.day] ?? []).map((s) => ({
+                id: `allday-${s.uid}-${s.d0}`,
+                label: s.summary,
+                onSelect: () => onBlockClick({ courseName: s.summary, src: s.src, uid: s.uid }),
+              })) : []}
+            />
           </>
         )}
 
