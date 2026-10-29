@@ -1277,17 +1277,17 @@ export function bytesToBase64(bytes: Uint8Array): string {
   return btoa(bin);
 }
 
-/** 「登录墙」判定：短响应 + 跳转/登录页特征（判据与 Rust fetch_binary 同源）。
- *  认出来才能让上层走「请重新登录」提示，而不是退化成一个莫名的解析失败。 */
-export function isLoginWallBody(mime: string, buf: Uint8Array): boolean {
-  if (/^image\//i.test(mime)) return false;
-  const head = new TextDecoder().decode(buf.subarray(0, 512)).trimStart();
-  return /location\.href/i.test(head) || /^<(!doctype|html)/i.test(head);
-}
+/** 「登录墙」判定：只看**登录页 / 网关引导页**（判据见 lib/loginWall.ts）。
+ *  认出来才能让上层走「请重新登录」提示；普通 HTML 错误页（4xx/5xx）不算——把它当成
+ *  登录失效，就会出现「附件 404 → 登录状态已失效」这种假话（2026-10-28 用户实录）。 */
+export { classifyWallBody, isLoginWallBody } from "./loginWall.js";
+import { isLoginWallBody } from "./loginWall.js";
 
 async function fetchImageDataUrl(url: string, forceWrap: boolean): Promise<string> {
   const resp = await nativeFetch(sessionUrl(url, forceWrap), { method: "GET" });
   const mime = (resp.headers.get("content-type") ?? "").split(";")[0]?.trim() ?? "";
+  // 非 2xx 先归位：错误页也是 HTML，交给登录墙判定只会得到一句假话（同附件预览的口径）。
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const buf = new Uint8Array(await resp.arrayBuffer());
   if (buf.length > IMG_MAX_BYTES) throw new Error(i18n("lib.clients.dc300032c143", { length: String(buf.length) }));
   if (isLoginWallBody(mime, buf)) throw new Error(i18n("lib.clients.193d04db6243"));

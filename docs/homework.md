@@ -81,6 +81,25 @@
 
 护栏：`tools/notice-read-test.mjs`。
 
+### 3.5 附件区的显示条件
+
+列表接口的 `fjmc` 只是**原始文件名**，不是「文件确实在」的证据：站点会给没有文件的通知
+带上名字，甚至渲染出文件名段为空的下载地址（实测恒 404）。因此：
+
+| 判定 | 行为 |
+|---|---|
+| 解析层 | 只认附件区块（`div.list.fujian` / `div#attachment`）内的锚点，且地址末段不得为空——没有文件名的地址一律不产出附件（`isDownloadableAttachmentUrl`） |
+| 通知详情 | 附件卡只在**拿到可下载地址**或解析失败（可重试）时出现；解析成功却无地址则不渲染，避免摆一个点了必然失败的「预览」 |
+| 作业详情 | 四类附件与「我的提交正文」同卡；两者都为空时整卡不出现（此前会留下只有标题的空卡） |
+| 失败归因 | 预览取数先看 HTTP 状态：非 2xx 报「HTTP 404」这类真实原因；只有登录页与网关引导页才说「登录状态已失效」（`lib/loginWall.ts`） |
+| 网关引导页 | 详情页遇到**真·取票引导页**时重放一次再判定，不再把瞬时引导页说成「网络学堂暂时未返回可用数据」 |
+| 拒绝页 ≠ 引导页 | 「短 + 带 `__vpn_*` 变量」不足以判引导页：wengine 给所有被代理页面都注入同一套变量。引导页是看不见文字的空壳；学校的错误壳页会渲染文案（`classifyLearnPage` → `learn-denied`，`wengineInterstitial` 要求可见文字为空）。误判的代价是双份的：整页报错，加一次白舞的 `/wengine-vpn/cookie` |
+| 提交页被拒 | 已批阅或已过提交期的作业，`tijiao` 的 GET 恒回那张壳页（真机 2556 字节「您没有执行当前操作的权限」，同批 `viewCj` 正常 71826 字节）。那是**状态**不是故障：正文与四类附件全在成绩页里。此时只把提交页当作不存在（`hasSubmitForm=false`，提交卡不出现），详情照常渲染；传输层故障（引导页、服务器错误页）仍按可重试的失败上报 |
+
+护栏：`tools/learn-attachment-url-test.mjs`、`tools/file-preview-wall-test.mjs`、
+`tools/learn-resource-enumeration-test.mjs`（拒绝页降级与「refused submission page」用例）、
+`tools/http-wengine-bootstrap-test.mjs`（带文案的壳页不触发 cookie 舞）。
+
 ### 3.3 请求体序列化
 
 网络学堂专线的请求体统一经 `apps/desktop/src/lib/bodySerialize.ts` 序列化，该模块为
@@ -141,6 +160,8 @@
 | `tools/hw-ignore-test.mjs` | 忽略状态：增删、上限、坏数据、订阅一致性 |
 | `tools/audited-hw-test.mjs` | 旁听作业单列：不计入计数与「全部」、不与正式课程混排 |
 | `tools/notice-read-test.mjs` | 通知已读：本地覆盖、与服务端并集、不误判未读 |
+| `tools/learn-attachment-url-test.mjs` | 附件地址有效性：末段为空的 404 地址不产出附件 |
+| `tools/file-preview-wall-test.mjs` | 预览失败归因：HTML 错误页 ≠ 登录页 ≠ 网关引导页 |
 | `tools/learn-need-file-test.mjs` | 必交附件记忆：记录、清除、上限 |
 | `tools/learn-camera-upload-test.mjs` | 拍照上传入口的端别分流 |
 | `tools/learn-submit-body-test.mjs` | 请求体序列化（FormData → multipart） |

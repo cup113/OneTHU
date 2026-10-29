@@ -9,6 +9,51 @@ async function test(name, fn) { await fn(); count++; console.log('✓ ' + name);
 const rows = (n, prefix='r') => Array.from({length:n}, (_,i)=>({id:`${prefix}${i}`}));
 const id = row => row.id;
 const fails = kind => e => e instanceof LearnEnumerationError && e.code === 'LEARN_ENUMERATION_INCOMPLETE' && e.complete === false && e.kind === kind;
+/** 「您没有执行当前操作的权限」壳页 —— 2026-10-28 真机原文（只把 wengine 应用码换成
+ *  夹具值）。短、带 __vpn_* 变量、**渲染了拒绝文案**：三个特征一起把它和「取票引导页」
+ *  （纯 JS 桥空壳、无可见文字）区分开。已批阅/已过期的作业，tijiao 恒回这一张。 */
+const DENIED_PAGE = `<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html>
+<head><meta name="renderer" content="webkit" />
+    <meta http-equiv="Content-Type" content="text/html;charset=UTF-8">
+    <title>您没有执行当前操作的权限</title>
+<script nonce="">
+var __vpn_hostname_data = "webvpn.tsinghua.edu.cn";
+var __vpn_protocol_data = "https";
+var __vpn_protocol_host = "https://webvpn.tsinghua.edu.cn";
+var __vpn_app_hostname_data = "fixture-app-code";
+var __vpn_app_protocol_data = "https";
+var __vpn_js_file = "/wengine-vpn/js/main.js?ver=20211207";
+var __vpn_worker_mode = 2;
+var __vpn_fast_mode = 0;
+</script>
+<script nonce="" src="/wengine-vpn/js/main.js?ver=20211207" charset="utf-8"></script>
+<style>
+        *{margin: 0;padding: 0;}
+         a{text-decoration: none;cursor:pointer}
+        body{text-align: center}
+        .bground{border: 0px solid #eaeaea;border-radius: 10px;width: 700px;height: 350px;}
+        .log{margin-top: 96px;}
+        .wenzi{text-align: left;vertical-align: top;margin-top: 120px;margin-left: 28px;}
+        .infoo{font-size: 22px;color: #1392f1;margin-bottom: 24px;}
+        .re_log{}
+        .re_log a{border:1px solid #1392f1;border-radius: 3px;font-size: 14px;}
+        .chongxin{background-color: #1392f1;color: #ffffff;padding: 2px 13px;margin-right: 16px;}
+        .guanbi{background-color: #ffffff;color: #1392f1;padding: 2px 23px;}
+</style>
+</head>
+<body>
+    <div class="bground">
+        <div class="log"><img src="/https/fixture-app-code/res/app/wlxt/img/log_fail.png?vpn-1"></div>
+        <div class="wenzi" style="text-align: left">
+            <p class="infoo">您没有执行当前操作的权限</p>
+            <p class="re_log">
+                <a class="guanbi" style="cursor:pointer">关闭</a>
+            </p>
+        </div>
+    </div>
+</body>
+</html>`;
 function fixture(handler) {
   const calls=[];
   const http=new HttpClient({fetch:async(url, init)=>{
@@ -171,11 +216,34 @@ await test('unavailable grade pages stay failures in read-only mode, regardless 
     new Response('<html><script>var __vpn_hostname_data="vpn", __vpn_app_hostname_data="learn";</script></html>'),
     new Response('Unavailable',{status:503}),
     new Response('<html><p>The requested assignment is unavailable</p></html>'),
+    // 学校对无权路径的答复壳页：短、带 wengine 变量、渲染拒绝文案。它是「拒绝」，
+    // 不是「空页」——当空页解析会静默报出「没有附件」这个假事实。
+    new Response(DENIED_PAGE),
   ]) {
     const f=fixture(url=>url.includes('viewCj')?response:new Response('<html><textarea name="zynr"></textarea></html>'));
     await assert.rejects(f.client.getHomeworkReadDetail('course','student'),e=>e.stage==='homework-grade-page');
-    assert.equal(f.calls.length,1);assert.ok(f.calls[0].url.includes('viewCj'));
+    // 只允许读成绩页；取票引导页会被 #readPage 重放一次，所以最多两次**同一个** URL。
+    assert.ok(f.calls.every(c=>c.url.includes('viewCj')),'read-only 不得去读提交页');
+    assert.ok(f.calls.length<=2,'引导页最多重放一次');
   }
+  const denied=fixture(url=>url.includes('viewCj')?new Response(DENIED_PAGE):new Response('<html><textarea name="zynr"></textarea></html>'));
+  await assert.rejects(denied.client.getHomeworkReadDetail('course','student'),e=>e.kind==='learn-denied');
+});
+await test('a refused submission page degrades to the grade page instead of failing the whole detail',async()=>{
+  // 2026-10-28 真机：已批阅/已过期的作业，tijiao 的 GET 恒回这张 2556 字节拒绝页，
+  // 同批 viewCj 回 71826 字节正常成绩页。此前双页一起判死 → 详情页整页报
+  //「网络学堂暂时未返回可用数据」，正文与附件全看不见；而它们其实都在成绩页里。
+  const page='<html><div class="list calendar clearfix"><div class="fl right"><div class="c55"><p>Task body</p></div></div></div><div class="list fujian clearfix"><a href="/b/download?fileId=teacher">Task.pdf</a></div><div class="list fujian clearfix"><a href="/b/download?fileId=answer">Answer.pdf</a></div></html>';
+  const f=fixture(url=>new Response(url.includes('tijiao')?DENIED_PAGE:page));
+  const detail=await f.client.getHomeworkPageDetail('course','student');
+  assert.equal(detail.description,'<p>Task body</p>');
+  assert.equal(detail.attachment.id,'teacher');assert.equal(detail.answerAttachment.id,'answer');
+  assert.equal(detail.hasSubmitForm,false,'没有提交权限的作业不可能是「有提交表单」');
+  assert.equal(f.calls.length,2,'两个页面仍然都要读，才能判定提交表单的有无');
+  // 传输层故障（真·取票引导页）仍是未知状态：照旧上报，照旧可重试。
+  const guide='<html><script>var __vpn_hostname_data="vpn", __vpn_app_hostname_data="learn";</script></html>';
+  await assert.rejects(fixture(url=>new Response(url.includes('tijiao')?guide:page)).client.getHomeworkPageDetail('course','student'),
+    e=>e.kind==='webvpn-guide'&&e.stage==='homework-submit-page');
 });
 await test('a recognized empty read-only homework page confirms empty visible attachments without checking a submit form',async()=>{
   const f=fixture(()=>new Response('<html><div class="list calendar clearfix"><div class="fl right"><div class="c55"></div></div></div></html>'));
