@@ -201,6 +201,7 @@ export const PAGE_ATOMS: StaticAtom[] = [
   { kind: "page", key: "thos", get title() { return i18n("state.atoms.1760b98532ec"); }, get sub() { return i18n("state.atoms.0f045b9615fc"); }, icon: IconThos, group: "页面", page: "thos" },
   { kind: "page", key: "otherinfo", get title() { return i18n("state.atoms.4ebe692f5dbb"); }, get sub() { return i18n("state.atoms.d8e3dfbe5f8a"); }, icon: IconExternal, group: "页面", page: "otherinfo" },
   { kind: "page", key: "tasks", get title() { return i18n("state.atoms.52fdbbaeda4c"); }, get sub() { return i18n("state.atoms.371c1b0109ee"); }, icon: IconCheck, group: "页面", page: "tasks" },
+  { kind: "page", key: "lists", get title() { return i18n("pages.lists.title"); }, get sub() { return i18n("pages.lists.atomSub"); }, icon: IconCheck, group: "页面", page: "lists" },
   { kind: "page", key: "services", get title() { return i18n("state.atoms.ec309ab207ef"); }, get sub() { return i18n("state.atoms.7eacf1926832"); }, icon: IconSpark, group: "页面", page: "services" },
   { kind: "page", key: "favs", get title() { return i18n("state.atoms.60a53514eb92"); }, get sub() { return i18n("state.atoms.75ed5296c3b6"); }, icon: IconPin, group: "页面", page: "favs" },
   { kind: "page", key: "boards", get title() { return i18n("state.atoms.0f591af87c35"); }, get sub() { return i18n("state.atoms.1cb2f2a7577c"); }, icon: IconTabsCards, group: "页面", page: "boards" },

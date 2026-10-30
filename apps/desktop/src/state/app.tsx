@@ -46,7 +46,8 @@ export type Page =
   | "board"
   | "contacts"
   | "org" // 组织主页（成员邮箱 / 资料库 / GitLab 仓库；navParams.orgId）
-  | "vault"; // 暂存箱（万物皆可收纳；Phase 1：混合对象清单 + 分享口令）
+  | "vault" // 暂存箱（万物皆可收纳；Phase 1：混合对象清单 + 分享口令）
+  | "lists"; // 清单（个人待办；复用 vault 文档，kind === "list" 的箱）
 
 /** 返回目标：页内返回键（BackButton）与顶栏返回键共用同一条数据 */
 export interface BackTarget {

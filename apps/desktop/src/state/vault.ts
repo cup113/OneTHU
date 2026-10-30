@@ -10,7 +10,10 @@ import { t as i18n } from "../i18n/index.js";
  */
 import type { AtomRef } from "./favorites.js";
 
-export type VaultItemType = "atom" | "text" | "file" | "board-item" | "payload";
+export type VaultItemType = "atom" | "text" | "file" | "board-item" | "payload" | "task";
+
+/** 箱子的用途：stash = 收纳（旧语义，缺省）；list = 清单页。两面互不可见。 */
+export type VaultBoxKind = "stash" | "list";
 
 /** 拖入暂存箱的识别结果（任何可拖元素最终都归一成这个） */
 export interface VaultCatch {
@@ -55,6 +58,9 @@ export interface VaultFileRef {
 export interface VaultItem extends VaultCatch {
   id: string;
   addedAt: number;
+  /** 清单条目是否已完成（只在 kind === "list" 的箱里写） */
+  done?: boolean;
+  doneAt?: number;
 }
 
 export interface VaultBox {
@@ -65,6 +71,8 @@ export interface VaultBox {
   updatedAt: number;
   /** 最近一次生成的口令（仅提示，可重新生成） */
   lastShareCode?: string;
+  /** 缺省 = stash：旧文档不需要迁移 */
+  kind?: VaultBoxKind;
 }
 
 export interface VaultDoc {
@@ -81,6 +89,7 @@ export const VAULT_TYPE_LABEL: Record<VaultItemType, string> = {
   get file() { return i18n("state.vault.39932f24fe11"); },
   get "board-item"() { return i18n("state.vault.206359b4b54d"); },
   get payload() { return i18n("state.vault.5440f7424f28"); },
+  get task() { return i18n("pages.lists.type.task"); },
 };
 
 function newId(prefix: string): string {
@@ -100,7 +109,10 @@ function load(): VaultDoc {
     if (p.v !== 1 || !Array.isArray(p.boxes) || p.boxes.length === 0) throw new Error("bad");
     const boxes = p.boxes.filter((b): b is VaultBox => !!b && typeof b.id === "string" && Array.isArray(b.items));
     if (boxes.length === 0) throw new Error("bad");
-    const activeId = boxes.some((b) => b.id === p.activeId) ? String(p.activeId) : boxes[0]!.id;
+    /* 老文档里的箱子都没有 kind → 全部算 stash；清单页上线后若一个 stash 都不剩，补一个空的。 */
+    if (!boxes.some((b) => b.kind !== "list")) boxes.unshift(emptyBox());
+    const stash = boxes.find((b) => b.kind !== "list")!;
+    const activeId = boxes.some((b) => b.id === p.activeId && b.kind !== "list") ? String(p.activeId) : stash.id;
     return { v: 1, boxes, activeId };
   } catch {
     const box = emptyBox();
@@ -130,12 +142,28 @@ export function vaultSnapshot(): VaultDoc {
   return doc;
 }
 
+/**
+ * 当前暂存箱：永远是 stash 箱。清单箱即使被别的代码写进 activeId，也不会接住拖入内容。
+ */
 export function activeVault(): VaultBox {
-  return doc.boxes.find((b) => b.id === doc.activeId) ?? doc.boxes[0]!;
+  return doc.boxes.find((b) => b.id === doc.activeId && b.kind !== "list")
+    ?? doc.boxes.find((b) => b.kind !== "list")
+    ?? doc.boxes[0]!;
+}
+
+/** 暂存表面能看到的箱子（旧箱无 kind，一律算 stash）。 */
+export function stashVaults(): VaultBox[] {
+  return doc.boxes.filter((b) => b.kind !== "list");
+}
+
+/** 清单页的箱子。 */
+export function listVaults(): VaultBox[] {
+  return doc.boxes.filter((b) => b.kind === "list");
 }
 
 export function setActiveVault(id: string): void {
-  if (!doc.boxes.some((b) => b.id === id) || doc.activeId === id) return;
+  const box = doc.boxes.find((b) => b.id === id);
+  if (!box || box.kind === "list" || doc.activeId === id) return;
   doc = { ...doc, activeId: id };
   commit();
 }
@@ -147,6 +175,15 @@ export function createVault(name = i18n("lib.contentexchange.4dc6d8e7a87a")): Va
   return box;
 }
 
+/** 新建清单：只入列，不抢 activeId（那是暂存浮球的当前箱）。 */
+export function createList(name = i18n("pages.lists.defaultName")): VaultBox {
+  const now = Date.now();
+  const box: VaultBox = { id: newId("vb."), name: name.trim() || i18n("pages.lists.defaultName"), items: [], createdAt: now, updatedAt: now, kind: "list" };
+  doc = { ...doc, boxes: [...doc.boxes, box] };
+  commit();
+  return box;
+}
+
 export function renameVault(id: string, name: string): void {
   const next = name.trim();
   if (!next) return;
@@ -154,16 +191,25 @@ export function renameVault(id: string, name: string): void {
   commit();
 }
 
-/** 删除箱子；至少保留一个（最后一个是 active 时重建一个空箱）。 */
+/** 删除箱子；每个表面至少保留一个（删掉最后一个 stash / 最后一份清单时各补一个空的）。 */
 export function deleteVault(id: string): void {
-  const rest = doc.boxes.filter((b) => b.id !== id);
-  if (rest.length === doc.boxes.length) return;
-  if (rest.length === 0) {
+  const target = doc.boxes.find((b) => b.id === id);
+  if (!target) return;
+  let boxes = doc.boxes.filter((b) => b.id !== id);
+  if (target.kind === "list") {
+    if (!boxes.some((b) => b.kind === "list")) {
+      boxes = [...boxes, { id: newId("vb."), name: i18n("pages.lists.defaultName"), items: [], createdAt: Date.now(), updatedAt: Date.now(), kind: "list" }];
+    }
+  } else if (!boxes.some((b) => b.kind !== "list")) {
     const box = emptyBox();
-    doc = { v: 1, boxes: [box], activeId: box.id };
-  } else {
-    doc = { ...doc, boxes: rest, activeId: rest.some((b) => b.id === doc.activeId) ? doc.activeId : rest[0]!.id };
+    doc = { v: 1, boxes: [box, ...boxes], activeId: box.id };
+    commit();
+    return;
   }
+  const active = boxes.some((b) => b.id === doc.activeId && b.kind !== "list")
+    ? doc.activeId
+    : boxes.find((b) => b.kind !== "list")!.id;
+  doc = { ...doc, boxes, activeId: active };
   commit();
 }
 
@@ -171,25 +217,96 @@ export function itemFromCatch(c: VaultCatch): VaultItem {
   return { ...c, id: newId("vi."), addedAt: Date.now() };
 }
 
-/** 同一 atom / 同一文件（hash）在同一箱内不重复；返回 duplicate 原因供调用方提示。 */
+/** 同一 atom / 同一文件（hash）在同一箱内不重复；清单只在未完成条目之间判重。 */
 export function isDuplicate(box: VaultBox, c: VaultCatch): boolean {
+  if (c.type === "task") {
+    const title = taskTitle(c.title);
+    return box.items.some((it) => it.type === "task" && !it.done && taskTitle(it.title) === title);
+  }
   if (c.atom) return box.items.some((it) => it.atom && it.atom.kind === c.atom!.kind && it.atom.key === c.atom!.key);
   if (c.file?.hash) return box.items.some((it) => it.file?.hash && it.file.hash === c.file!.hash);
   if (c.text) return box.items.some((it) => it.type === "text" && it.text === c.text);
   return false;
 }
 
-export function addToVault(c: VaultCatch, boxId?: string): { ok: boolean; reason?: "duplicate" | "no-box"; item?: VaultItem } {
+export type VaultAddReason = "duplicate" | "no-box" | "list-box" | "stash-box";
+
+export function addToVault(c: VaultCatch, boxId?: string): { ok: boolean; reason?: VaultAddReason; item?: VaultItem } {
   const box = boxId ? doc.boxes.find((b) => b.id === boxId) : activeVault();
   if (!box) return { ok: false, reason: "no-box" };
+  /* 两个表面按用途分开：清单箱只收 task，stash 箱不收 task。 */
+  if (box.kind === "list" && c.type !== "task") return { ok: false, reason: "list-box" };
+  if (box.kind !== "list" && c.type === "task") return { ok: false, reason: "stash-box" };
   if (isDuplicate(box, c)) return { ok: false, reason: "duplicate" };
   const item = itemFromCatch(c);
+  const items = c.type === "task" ? [...box.items, item] : [item, ...box.items];
   doc = {
     ...doc,
-    boxes: doc.boxes.map((b) => (b.id === box.id ? { ...b, items: [item, ...b.items], updatedAt: Date.now(), lastShareCode: undefined } : b)),
+    boxes: doc.boxes.map((b) => (b.id === box.id ? { ...b, items, updatedAt: Date.now(), lastShareCode: undefined } : b)),
   };
   commit();
   return { ok: true, item };
+}
+
+function taskTitle(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+}
+
+/** 新建一条清单待办：追加到末尾，未完成之间按标题判重。 */
+export function addTask(boxId: string, title: string): { ok: boolean; reason?: "empty" | "duplicate" | "no-box"; item?: VaultItem } {
+  const text = title.trim().replace(/\s+/g, " ");
+  if (!text) return { ok: false, reason: "empty" };
+  const result = addToVault({ type: "task", title: text }, boxId);
+  if (result.ok) return { ok: true, item: result.item };
+  return { ok: false, reason: result.reason === "duplicate" ? "duplicate" : "no-box" };
+}
+
+export function setTaskDone(boxId: string, itemId: string, done: boolean): void {
+  doc = {
+    ...doc,
+    boxes: doc.boxes.map((b) => (b.id !== boxId ? b : {
+      ...b,
+      updatedAt: Date.now(),
+      items: b.items.map((it) => (it.id === itemId && it.type === "task" ? { ...it, done, doneAt: done ? Date.now() : undefined } : it)),
+    })),
+  };
+  commit();
+}
+
+/** 清除已完成：返回删掉的条数。 */
+export function clearDoneTasks(boxId: string): number {
+  const box = doc.boxes.find((b) => b.id === boxId);
+  if (!box) return 0;
+  const kept = box.items.filter((it) => !it.done);
+  const removed = box.items.length - kept.length;
+  if (!removed) return 0;
+  doc = { ...doc, boxes: doc.boxes.map((b) => (b.id === boxId ? { ...b, items: kept, updatedAt: Date.now() } : b)) };
+  commit();
+  return removed;
+}
+
+/**
+ * 拖动排序：只重排未完成项；已完成项在数组里的位置保持不动，
+ * 所以取消勾选能回到原位。返回是否真的移动过。
+ */
+export function reorderTasks(boxId: string, fromId: string, toId: string, after: boolean): boolean {
+  const box = doc.boxes.find((b) => b.id === boxId);
+  if (!box) return false;
+  const slots: number[] = [];
+  box.items.forEach((it, index) => { if (it.type === "task" && !it.done) slots.push(index); });
+  const open = slots.map((i) => box.items[i]!);
+  const from = open.findIndex((it) => it.id === fromId);
+  if (from < 0) return false;
+  const moved = open.splice(from, 1)[0]!;
+  const to = open.findIndex((it) => it.id === toId);
+  if (to < 0) return false;
+  open.splice(after ? to + 1 : to, 0, moved);
+  const items = [...box.items];
+  slots.forEach((slot, k) => { items[slot] = open[k]!; });
+  if (items.every((it, i) => it === box.items[i])) return false;
+  doc = { ...doc, boxes: doc.boxes.map((b) => (b.id === boxId ? { ...b, items, updatedAt: Date.now() } : b)) };
+  commit();
+  return true;
 }
 
 /** 更新箱内某条目（用于远端文件缓存完成后补 hash/stagedPath/cloudPath）。 */

@@ -33,7 +33,7 @@ import {
 import { HarnessMark } from "./HarnessMark.js";
 import { NAV_REGISTRY } from "../state/navigation.js";
 import { DESENSITIZE_BUILD } from "../lib/privacy.js";
-import { IconHome, IconArrowUp, IconChevron, IconCopyTab, IconFolder, IconFolderPlus, IconInfo, IconLearn, IconMore, IconPen, IconPlug, IconRefresh, IconSchedule, IconSettings, IconSidebarRail, IconStar, IconToday, IconXk, IconCard, IconCalendar, FolderIcon, IconExternal, IconThos, IconTrace, IconMail, IconCloud, IconBook, IconGitLab, IconXiaoda } from "./Icons.js";
+import { IconHome, IconArrowUp, IconChevron, IconCheck, IconCopyTab, IconFolder, IconFolderPlus, IconInfo, IconLearn, IconMore, IconPen, IconPlug, IconRefresh, IconSchedule, IconSettings, IconSidebarRail, IconStar, IconToday, IconXk, IconCard, IconCalendar, FolderIcon, IconExternal, IconThos, IconTrace, IconMail, IconCloud, IconBook, IconGitLab, IconXiaoda } from "./Icons.js";
 import { ContextMenuLayer, useContextMenu } from "./ContextMenu.js";
 import {
   clearPageChrome, pageChromeSnapshot, readPageChrome, subscribePageChrome, syncPageChrome,
@@ -118,6 +118,8 @@ export const NAV: Array<{ page: Page; label: string; icon: (p: object) => ReactN
   { page: "zhjwxk", get label() { return i18n("components.layout.fd17d86dd268"); }, icon: IconXk },
   { page: "thos", get label() { return i18n("components.layout.1760b98532ec"); }, icon: IconThos },
   { page: "otherinfo", get label() { return i18n("components.layout.4ebe692f5dbb"); }, icon: IconExternal },
+  /* 清单（个人待办）：排在目录末尾，不挤占默认程序坞的前八颗球；靠搜索/更多功能/OneShot 可达。 */
+  { page: "lists", get label() { return i18n("pages.lists.title"); }, icon: IconCheck },
 ];
 
 /** 插件动态 tab（useSyncExternalStore 订阅；PageHead 的 navLabel 消歧也用它） */

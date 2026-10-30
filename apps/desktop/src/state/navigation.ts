@@ -99,6 +99,7 @@ export const NAV_REGISTRY: NavEntry[] = [
 
   /* —— 日程 —— */
   { id: "tasks", get name() { return i18n("state.navigation.52fdbbaeda4c"); }, category: "日程", visibility: "core", page: "tasks", keywords: ["待办", "任务", "提醒", "作业截止"], get note() { return i18n("state.navigation.fe07d17e6d4b"); } },
+  { id: "lists", get name() { return i18n("pages.lists.title"); }, category: "日程", visibility: "core", page: "lists", keywords: ["清单", "待办", "checklist", "todo", "记事"], get note() { return i18n("pages.lists.note"); } },
   { id: "life", get name() { return i18n("state.navigation.15d208d1b4c9"); }, category: "生活", visibility: "core", page: "life", keywords: ["生活", "校园卡", "电费", "洗衣机", "宿舍"], get note() { return i18n("state.navigation.241e209e86bb"); } },
   { id: "schedule", get name() { return i18n("state.navigation.2e3250329028"); }, category: "日程", visibility: "core", page: "schedule", keywords: ["课表", "日程", "上课"], get note() { return i18n("state.navigation.a1e8f8681634"); } },
   { id: "trace", get name() { return i18n("state.navigation.60458dfb4c14"); }, category: "日程", visibility: "group", page: "trace", keywords: ["地图", "导航", "前往"] },

@@ -25,6 +25,7 @@ import { BoardListPage } from "../../pages/BoardListPage.js";
 import { ContactsPage } from "../../pages/Contacts.js";
 import { OrganizationPage } from "../../pages/Organization.js";
 import { VaultPage } from "../vault/VaultPage.js";
+import { ListsPage } from "../../pages/ListsPage.js";
 import { OnePageSurface } from "../FreeBoard.js";
 import { MailPage } from "../../pages/MailPage.js";
 import CloudPage from "../../pages/CloudPage.js";
@@ -113,6 +114,8 @@ export function renderPage(page: Page): ReactNode {
     case "org": return <OrganizationPage />;
     case "vault":
       return <VaultPage />;
+    case "lists":
+      return <ListsPage />;
     case "board":
       /* 一块 OnePage = 一块自由白板（与首页同一画布）；页面 id 与深链 #/board/<板 id> 不变 */
       return <OnePageSurface />;

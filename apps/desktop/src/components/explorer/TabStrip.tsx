@@ -46,7 +46,7 @@ import { topLevelPage, type LearnNav, type Page } from "../../state/app.js";
 import { activeBoard, loadBoard } from "../../state/board.js";
 import { pluginTabsSnapshot, subscribePluginTabs } from "../../plugins/tabs.js";
 import {
-  FOLDER_ICONS, IconBook, IconCalendar, IconCard, IconCloud, IconExternal, IconFlag, IconFolder,
+  FOLDER_ICONS, IconBook, IconCalendar, IconCard, IconCheck, IconCloud, IconExternal, IconFlag, IconFolder,
   IconGitLab, IconHome, IconIn, IconInfo, IconLearn, IconMail, IconOrb, IconPen, IconPin, IconPlus,
   IconSchedule, IconSettings, IconSpark, IconStar, IconTabsCards, IconThos, IconTrace, IconX,
   IconXiaoda, IconXk,
@@ -668,6 +668,7 @@ export function WorkspaceCreateDialog({ onCreate, onCancel }: { onCreate: (o: { 
 function pageGlyph(page: Page): (p: { width?: number; height?: number }) => ReactNode {
   switch (topLevelPage(page)) {
     case "tasks": return IconPen;
+    case "lists": return IconCheck;
     case "learn": return IconLearn;
     case "schedule": return IconSchedule;
     case "trace": return IconTrace;

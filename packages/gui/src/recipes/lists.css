@@ -1,0 +1,220 @@
+/* 清单页：纸面式单栏。全部取值走 OneGUI 令牌，不写字面色值与裸尺寸。 */
+.lists-page {
+  width: 100%;
+  max-width: var(--og-contacts-page-max);
+  margin-inline: auto;
+  padding-bottom: var(--og-space-9);
+  position: relative;
+}
+
+.lists-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--og-space-2);
+  padding-top: var(--og-space-2);
+}
+
+html:root .lists-title {
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  min-width: 0;
+}
+
+.lists-title .og-btn-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--og-space-1);
+  font-size: var(--og-text-title);
+  font-weight: var(--og-weight-semibold);
+  line-height: var(--og-text-title-lh);
+  color: var(--og-content-1);
+}
+
+.lists-caret {
+  font-size: var(--og-text-micro);
+  color: var(--og-content-3);
+}
+
+.lists-count {
+  margin-left: auto;
+}
+
+.lists-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--og-space-1);
+  margin-left: var(--og-space-2);
+  align-self: center;
+}
+
+.lists-add {
+  margin: var(--og-space-4) 0 var(--og-space-2);
+}
+
+.lists-add .og-input {
+  width: 100%;
+}
+
+.lists-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.lists-row {
+  display: flex;
+  align-items: center;
+  min-height: calc(var(--og-space-7) + var(--og-space-6));
+  border-bottom: 1px solid var(--og-line-1);
+  background: var(--og-surface-0);
+  user-select: none;
+}
+
+.lists-row.is-dragging {
+  position: relative;
+  z-index: 2;
+  border-radius: var(--og-radius-sm);
+  box-shadow: var(--og-elev-2);
+}
+
+.lists-row.is-before {
+  box-shadow: inset 0 2px 0 var(--og-content-1);
+}
+
+.lists-row.is-after {
+  box-shadow: inset 0 -2px 0 var(--og-content-1);
+}
+
+.lists-check {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--og-space-3);
+  min-height: calc(var(--og-space-7) + var(--og-space-6));
+  cursor: pointer;
+}
+
+.lists-check .og-check-box {
+  flex: none;
+  width: calc(var(--og-space-5) + 2px);
+  height: calc(var(--og-space-5) + 2px);
+  border-radius: var(--og-radius-full);
+}
+
+.lists-check .og-check-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.lists-row-text {
+  display: block;
+  font-size: var(--og-text-body);
+  color: var(--og-content-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lists-row.is-done .lists-row-text {
+  color: var(--og-content-3);
+  text-decoration: line-through;
+}
+
+.lists-row-more {
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.lists-row:hover .lists-row-more,
+.lists-row:focus-within .lists-row-more {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .lists-row-more {
+    opacity: 1;
+  }
+}
+
+.lists-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--og-space-1);
+  padding-top: var(--og-space-9);
+  text-align: center;
+}
+
+.lists-empty b {
+  font-size: var(--og-text-label);
+  font-weight: var(--og-weight-medium);
+  color: var(--og-content-2);
+}
+
+.lists-done {
+  margin-top: var(--og-space-2);
+  border-top: 1px solid var(--og-line-1);
+}
+
+.lists-done > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--og-space-2);
+  height: calc(var(--og-space-6) + var(--og-space-5));
+  list-style: none;
+  cursor: pointer;
+  font-size: var(--og-text-label);
+  color: var(--og-content-2);
+}
+
+.lists-done > summary::-webkit-details-marker {
+  display: none;
+}
+
+.lists-chev {
+  font-size: var(--og-text-micro);
+  color: var(--og-content-3);
+  transition: transform 0.12s;
+}
+
+.lists-done[open] .lists-chev {
+  transform: rotate(90deg);
+}
+
+.lists-undo {
+  position: sticky;
+  bottom: var(--og-space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--og-space-2);
+  width: fit-content;
+  height: calc(var(--og-space-6) + var(--og-space-5));
+  margin: var(--og-space-4) auto 0;
+  padding: 0 var(--og-space-2) 0 var(--og-space-4);
+  border-radius: var(--og-radius-full);
+  background: var(--og-content-1);
+  color: var(--og-surface-0);
+  box-shadow: var(--og-elev-2);
+}
+
+.lists-undo .og-btn {
+  color: inherit;
+}
+
+.lists-blank {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--og-space-2);
+  padding: var(--og-space-10) 0;
+  text-align: center;
+}
+
+.lists-blank b {
+  font-size: var(--og-text-body);
+  font-weight: var(--og-weight-medium);
+  color: var(--og-content-2);
+}
