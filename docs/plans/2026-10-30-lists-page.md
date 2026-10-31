@@ -122,5 +122,7 @@ done = 任务里 done 的，按数组顺序
 
 ## 已验证 / 未验证
 
-- 已过：`tsc --noEmit`、`i18n-test`（7732 键 × 2）、OneGUI 护栏（R1–R9）、风格扫描、令牌守卫、`nav-shell-test`、`pc-layout-test`、`lists-model-test`（12 项）。
-- 未验：真实浏览器里的拖动、撤销计时、移动端长按；Android/iOS 真机；未跑完整 `pnpm guard`（其 `ui-copy-lint` 在基线提交上已有 12 处历史违规）。
+- 已过：`tsc --noEmit`、`i18n-test`（7732 键 × 2）、OneGUI 护栏（R1–R9）、风格扫描、令牌守卫、`nav-shell-test`、`pc-layout-test`、`lists-model-test`（12 项）、`nav-page-whitelists-test`。
+- 真实浏览器验收（2026-10-31）：通过——入口可达、添加与判重、撤销、拖动排序与刷新保持、暂存箱与清单双向隔离、取消勾选回原位。
+- 验收首轮失败：`openTab` 的 `KNOWN_PAGES` 没有 `lists`，点入口直接回首页。已补登三张白名单，并加 `nav-page-whitelists-test` 钉住「导航注册表 ⊆ 三张白名单」。
+- 未验：Android / iOS 真机；未跑完整 `pnpm guard`（其 `ui-copy-lint` 在基线提交上已有 12 处历史违规）。
