@@ -422,7 +422,7 @@ jobs:
             --version "$VERSION" \
             --out release-out/latest.json \
             --releasedAt "$(date -u +%F)" \
-            --notes "分叉 $VERSION：基线换到上游 0.11.4-fix-3——CLI 运行时改为可选分包（桌面端「安装 CLI」从本仓 Release 取与安装包同版本的 CLI 包，装不上的版本会被应用判为不可用）、周导航滑动与视口铺满、会话恢复与更新 epoch 修正、Windows 启动器不再依赖 PowerShell 模块。分叉侧新增全天事件横幅行（方案 A：落星期列、跨天连续、超出道次折叠成 +N）；网络学堂失败归因修正延续——附件 404 不再说成「登录失效」，已批阅/已过期作业不再因提交页被拒而整页报错；保留凭据文件属主接受 Administrators、系统日历同步诊断权限、托盘/悬浮球保活、系统日历差异同步与自定义日程重复规则。更新源仍指向 cup113/OneTHU。"
+            --notes "分叉 $VERSION：基线换到上游 38a3aa69（NextTHULearn 插件对齐、课程看板与官方未读/课表数据）——网络学堂 403 现在按会话失效自愈：重建会话后用新凭据重放，重试不再复用死凭据，而取凭据页上的 403 仍归为服务失败；附件 404 不再误报「登录失效」，已批阅/已过期作业不再因提交页被拒而整页报错。分叉侧进版：全天事件横幅行（方案 A：落星期列、跨天连续、超出道次折叠成 +N）、自定义日程重复规则、悬浮圆钮拖动与手机底部 Sheet、系统日历差异同步、CLI 运行时可分离安装（从本仓 Release 取与安装包同版本的 CLI 包）、托盘/悬浮球保活与 Windows 私有存储适配。更新源仍指向 cup113/OneTHU。"
       - name: Write release notes
         env:
           VERSION: ${{ inputs.version }}
