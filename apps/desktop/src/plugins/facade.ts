@@ -79,7 +79,7 @@ const TOP_PAGES = new Set([
   "homepage", "learn", "schedule", "trace", "otherinfo", "info", "life", "reserve", "zhjwxk", "thos",
   "mail", "cloud", "gitlab", "thubook", "xiaoda", "tasks", "services", "favs", "boards", "board",
   "learn-assignments", "learn-notices", "learn-files", "learn-search", "learn-semester",
-  "contacts", "org", "vault",
+  "contacts", "org", "vault", "lists",
 ]);
 import {
   getCloudCalConfig, getCloudEvents, getLocalEvents, msSinceSync, syncCloudCal,

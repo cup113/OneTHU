@@ -91,7 +91,7 @@ const listeners = new Set<() => void>();
 const KNOWN_PAGES: ReadonlySet<string> = new Set([
   "homepage", "learn", "schedule", "trace", "mail", "cloud", "thubook", "info", "life",
   "reserve", "zhjwxk", "thos", "otherinfo", "gitlab", "folder", "tasks", "services", "favs",
-  "boards", "board", "vault", "contacts", "org", "xiaoda",
+  "boards", "board", "vault", "contacts", "org", "xiaoda", "lists",
   /* 网络学堂子页/详情页：OH 的 navigate 描述一直宣称支持这些页面，但以前不在白名单里，
      首页标签下 navigate 会被 openTab 判"未知页"直接回首页 → OH 假报成功。 */
   "learn-course", "learn-assignments", "learn-notices", "learn-files", "learn-search", "learn-semester",
