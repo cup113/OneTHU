@@ -37,7 +37,7 @@ my-plugin/
 pnpm --filter @onethu/desktop build:harness
 
 # 桌面开发
-pnpm --filter @onethu/desktop tauri:dev
+pnpm --filter @onethu/desktop dev:app
 ```
 
 历史开发用的 `~/onethu-harness-dist/` 手动部署已废弃：开机自动从资源目录

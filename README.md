@@ -93,7 +93,7 @@ pnpm install
 pnpm dev
 ```
 
-浏览器预览不等同于原生宿主。原生构建需 Rust 与 Tauri 平台依赖，Android 另需 JDK / SDK / NDK。主力开发分支为 dev3。
+浏览器预览不等同于原生宿主：`pnpm dev` 只起 vite，桌面端用 `pnpm dev:app`。原生构建需 Rust 与 Tauri 平台依赖，Android 另需 JDK / SDK / NDK。主力开发分支为 dev3。
 
 - [开发者中心与构建](docs/developers.md)
 - [OneTHU CLI、SDK 与常驻助理](docs/onethu-cli.md)：独立登录、课程归档、定时检查和 IM 通知；MCP 可供其他智能体使用。安装与验收边界见指南。
