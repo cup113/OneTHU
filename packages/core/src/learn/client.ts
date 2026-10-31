@@ -2,7 +2,7 @@
  * 网络学堂客户端（本科生视角）。
  * 登录 = CAS ticket 漫游 → 课程列表页抓 _csrf；接口失效自动重登录（retryAfterLogin）。
  */
-import { AuthRequiredError, HttpClient } from "../http.js";
+import { AuthRequiredError, HttpClient, visiblePageText } from "../http.js";
 import { encryptPassword } from "../crypto/sm2.js";
 import * as urls from "./urls.js";
 import { collectLearnOffsetPages, collectLearnSizePages, readLearnTotal } from "./pagination.js";
@@ -35,7 +35,7 @@ interface LearnJson {
 
 import { decodeHtmlEntities } from "../info/htmltext.js";
 import { parseLearnTime } from "./time.js";
-import { learnAttachmentName } from "./attachmentName.js";
+import { isDownloadableAttachmentUrl, learnAttachmentName } from "./attachmentName.js";
 
 /** 文本字段实体解码：全量命名/数值实体（mdash/ndash/引号/希腊字母…），
  *  并对残留实体再收一轮（站点偶发双重转义 &amp;mdash; → &mdash; → —）。
@@ -473,6 +473,10 @@ function extractLearnCsrf(html: string): { token: string; via: string } | null {
   return null;
 }
 
+/** 学校对「这条路径你没资格走」的答复（wengine 壳页把 title 与提示文字都渲染出来）。
+ *  只认短页上的明确拒绝文案——长业务页正文里出现「权限」二字是常事，不能据此判死。 */
+const LEARN_DENIED_RE = /没有(?:执行当前操作的)?权限|无(?:访问|操作|下载|查看)权限|拒绝访问|access\s*denied|forbidden/i;
+
 /** 回页种类（只进诊断，不进界面）：分清「登录状态死了」与「页面换了形状」——
  *  两者的处置完全不同，以前都报同一句话，排查只能靠猜。 */
 function classifyLearnPage(html: string): string {
@@ -487,6 +491,11 @@ function classifyLearnPage(html: string): string {
   if (/<title>\s*(?:Apache Tomcat|Error report|HTTP Status)|<h1[^>]*>\s*HTTP Status\s+[45]\d\d/i.test(markup)) return "server-error-page";
   if (!businessMarkup && /<(?:a|form|meta)\b[^>]*(?:\/do\/off\/ui\/auth\/login\/|oauth\.tsinghua\.edu\.cn\/thu-oauth\/auth)/i.test(markup)) return "id-login-link";
   const learningNavigation = /\/f\/wlxt\/|name=["']_csrf["']/i.test(markup);
+  // wengine 的「您没有执行当前操作的权限」壳页：短、含 wengine 变量，但**有可见文案**。
+  // 它是学校对这条路径的业务拒绝，不是取票引导页——已批改/已过期的作业，其 tijiao
+  // 恒回 2556 字节本页，而同批 viewCj 回 71826 字节正常页（2026-10-28 实录）。判成
+  // webvpn-guide 会让作业详情整页报「暂时未返回可用数据」，还白舞一次 cookie。
+  if (html.length < 4000 && LEARN_DENIED_RE.test(visiblePageText(markup))) return "learn-denied";
   if (html.length < 4000 && html.includes("__vpn_hostname_data") && html.includes("__vpn_app_hostname_data") && !businessMarkup && !learningNavigation) return "webvpn-guide";
   if (extractLearnCsrf(html)) return /__vpn_|wengine/i.test(html) ? "learn-page-proxied" : "learn-page";
   return html.trim().length === 0 ? "empty" : "unknown";
@@ -677,7 +686,7 @@ export class LearnClient {
       const html = await this.#http.text(urls.LEARN_COURSE_LIST_PAGE(), {}, { validateStatus: true });
       const kind = classifyLearnPage(html);
       this.lastDebug = `COURSE-PAGE kind=${kind} len=${html.length}`;
-      const hit = isLearnAuthPage(kind) || kind === "webvpn-guide" || kind === "server-error-page"
+      const hit = isLearnAuthPage(kind) || kind === "webvpn-guide" || kind === "server-error-page" || kind === "learn-denied"
         ? null : extractLearnCsrf(html);
       this.lastCsrfDebug = hit
         ? `ok via=${hit.via} len=${html.length}`
@@ -780,11 +789,18 @@ export class LearnClient {
     if (isLearnAuthPage(kind)) throw new SessionExpiredError();
     // HttpClient has already attempted the WebVPN cookie bootstrap. A remaining
     // gateway/server page is service failure, not evidence that credentials died.
-    if (kind === "webvpn-guide" || kind === "server-error-page") throw new LearnResponseError(kind);
+    // `learn-denied` 是学校明确拒绝这条路径（无权限页），也不能当空页解析——
+    // 否则会静默返回「没有附件」这一假事实。归因留给调用方。
+    if (kind === "webvpn-guide" || kind === "server-error-page" || kind === "learn-denied") throw new LearnResponseError(kind);
   }
 
   async #readPage(url: string, init: RequestInit = {}): Promise<string> {
-    const body = await this.#readText(url, init);
+    let body = await this.#readText(url, init);
+    // webvpn 取票引导页是**瞬时**的：HttpClient 在 text() 里已试过一次 cookie 引导，
+    // 仍可能被并发或慢握手错过（真机 2026-10-28：作业详情页拿到 2556 字节引导页 → 附件区
+    // 报「暂时未返回可用数据」，而同一批请求里另一条已拿到 200）。这里重放一次，
+    // 仍拿到引导页才按服务不可用上报——引导页不是会话死亡的证据，但也不该让用户白等。
+    if (classifyLearnPage(body) === "webvpn-guide") body = await this.#readText(url, init);
     this.#checkReadPage(body);
     if (!body.trim()) throw new LearnResponseError("empty-page");
     return body;
@@ -1145,6 +1161,9 @@ export class LearnClient {
       // 页面经 webvpn 取回时 href 可能已是 `/https/<hex>/…` 包装形态：交给 learnAbsoluteUrl
       // 判断（再拼一次 LEARN_PREFIX 就是双重包装 → 404，真机踩过）
       const downloadUrl = urls.learnAbsoluteUrl(dl ?? href);
+      // 地址没有文件名（末段为空）＝ 站点渲染了一个不存在的附件链接，实测恒 404。
+      // 产出它只会给用户一个「点了必然失败」的预览按钮（2026-10-28 用户实录）。
+      if (!isDownloadableAttachmentUrl(downloadUrl)) continue;
       const size = decodeText(/<span[^>]*class="[^"]*color[^"]*"[^>]*>([^<]*)<\/span>/i.exec(block)?.[1] ?? "").trim();
       if (!attachments.some(item => item.downloadUrl === downloadUrl)) attachments.push({ id, name, downloadUrl, size: size || undefined });
     }
@@ -1170,6 +1189,14 @@ export class LearnClient {
       }
     }
     return html.slice(openIdx, Math.min(html.length, openIdx + 8000));
+  }
+
+  /** 通知详情页里的**附件区块**（`div.list.fujian` 或 `div#attachment`）。
+   *  与作业侧同因：整页扫描会把页头/页脚里带 wjid 的链接也当成附件，凭空长出一行
+   *  「预览」；这里只认附件区块，找不到（老页面结构）才由调用方退回整页。 */
+  #attachmentBlock(html: string): string | null {
+    const m = /<div\b[^>]*(?:id=["']attachment["']|class=["'][^"']*\bfujian\b[^"']*["'])[^>]*>/i.exec(html);
+    return m ? this.#fujianBlockContent(html, m.index) : null;
   }
 
   /** 作业详情页（viewCj HTML）附件解析 —— thu-learn-lib parseHomeworkAtUrl 等价。
@@ -1228,15 +1255,28 @@ export class LearnClient {
         this.#readPage(this.#withCsrf(urls.LEARN_HOMEWORK_SUBMIT_PAGE(courseId, studentHomeworkId))),
         this.#readPage(this.#withCsrf(urls.LEARN_HOMEWORK_PAGE(courseId, studentHomeworkId))),
       ]);
-      const failedIndex = result.findIndex((r) => r.status === "rejected");
-      const failed = result[failedIndex];
-      if (failed?.status === "rejected") {
-        if (failed.reason instanceof Error) Object.assign(failed.reason, { stage: failedIndex === 0 ? "homework-submit-page" : "homework-grade-page" });
-        throw failed.reason;
+      const [submitResult, gradeResult] = result;
+      if (gradeResult?.status === "rejected") {
+        if (gradeResult.reason instanceof Error) Object.assign(gradeResult.reason, { stage: "homework-grade-page" });
+        throw gradeResult.reason;
       }
-      const pages = result.map((r) => r.status === "fulfilled" ? r.value : "") as [string, string];
-      if (!pages.some(p => p.trim())) throw new LearnResponseError("empty-detail");
-      return pages;
+      // 提交页被判「您没有执行当前操作的权限」＝ 这篇作业已批阅或已过提交期，是**状态**
+      // 而非故障：学校对不开提交的作业用一张 2556 字节拒绝页答复 GET，而同批 viewCj
+      // 正常返回成绩页（2026-10-28 实录）。正文与四类附件全在成绩页里，跟提交权限毫无
+      // 关系——绝不因为拿不到提交表单就让整个详情报「暂时未返回可用数据」。传输层故障
+      // （取票引导页、服务器错误页）仍是未知状态，照旧上报，也照旧可重试。
+      let submitPage = "";
+      if (submitResult?.status === "rejected") {
+        const denied = submitResult.reason instanceof LearnResponseError && submitResult.reason.kind === "learn-denied";
+        if (!denied) {
+          if (submitResult.reason instanceof Error) Object.assign(submitResult.reason, { stage: "homework-submit-page" });
+          throw submitResult.reason;
+        }
+        this.#http.debug?.("LEARN-HW 提交页被拒（该作业无提交权限），改用成绩页");
+      } else submitPage = submitResult?.value ?? "";
+      const page = gradeResult?.value ?? "";
+      if (!submitPage.trim() && !page.trim()) throw new LearnResponseError("empty-detail");
+      return [submitPage, page] as [string, string];
     });
     const hasForm = (h: string): boolean =>
       /\btjzy\b/i.test(h) ||
@@ -1315,7 +1355,8 @@ export class LearnClient {
     await this.#ensureCsrfReady();
     this.#requireCsrf();
     const html = await this.#withRelogin(() => this.#readPage(this.#withCsrf(urls.LEARN_NOTIFICATION_DETAIL(courseId, notificationId))));
-    const attachments = this.#parseAttachmentAnchors(html);
+    // 只看附件区块（同作业侧的教训：整页扫描会混进页头/页脚的导航链接）
+    const attachments = this.#parseAttachmentAnchors(this.#attachmentBlock(html) ?? html);
     // fjmc in the notification list is the original filename, including its
     // extension. Only use this single-file field for an unambiguous attachment.
     if (attachments.length === 1 && !attachments[0]!.name && attachmentName?.trim()) {

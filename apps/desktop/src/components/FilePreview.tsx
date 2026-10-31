@@ -22,7 +22,7 @@ import { createPortal } from "react-dom";
 import { useExitPhase } from "../lib/motion.js";
 import { sanitizeDisplayHtml } from "../lib/safeHtml.js";
 import { useExpanded } from "../state/usePlatformLayout.js";
-import { downloadLearnUrl, saveLearnUrlAs, sessionUrl, isLoginWallBody, bytesToBase64 } from "../lib/clients.js";
+import { downloadLearnUrl, saveLearnUrlAs, sessionUrl, classifyWallBody, bytesToBase64 } from "../lib/clients.js";
 import { isAndroidHost } from "../lib/yktWebview.js";
 import { isAndroidNavigator, isWindowsNavigator } from "../lib/androidHost.js";
 import { explainNetworkError, nativeFetch, rawErrorText } from "../lib/transport.js";
@@ -590,9 +590,15 @@ async function fetchBinary(url: string): Promise<FetchedBinary> {
   // 只吃 JS 侧 cookie，wengine 按 UA 指纹校验票会把包装域请求判成「票无效」。
   // 上限与超时仍按文件预览调：桌面 48MB，安卓因 base64 IPC 限制收紧到 10MB（见上注释）。
   const resp = await nativeFetch(sessionUrl(url), { method: "GET", timeoutMs: 60_000 });
+  // 非 2xx 先归位：附件被删除/地址已失效时 learn 回的是**HTML 错误页**，与登录页同形。
+  // 旧代码不看状态码、直接当登录墙，于是 404 被报成「登录状态已失效，请重新登录后再预览」
+  // （2026-10-28 用户实录：通知附件 …/kcggFjxz/{hex}/ 恒 404，而 learn 列表接口全是 200）。
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const mime = (resp.headers.get("content-type") || "application/octet-stream").split(";")[0]?.trim() || "application/octet-stream";
   const buf = new Uint8Array(await resp.arrayBuffer());
-  if (isLoginWallBody(mime, buf)) throw new Error(i18n("components.filepreview.215c4f5bad1d"));
+  // 只有登录页 / 网关引导页才说「请重新登录」；普通 HTML 页按真实扩展名走（.html 附件能看）。
+  const wall = classifyWallBody(mime, buf);
+  if (wall === "login" || wall === "gateway") throw new Error(i18n("components.filepreview.215c4f5bad1d"));
   // 大小闸门与 Rust 侧同语（errMsg 认 too-large:<实际>:<上限> 给出「下载/另存为」出路）
   const cap = previewCap();
   if (buf.length > cap) throw new Error(`too-large:${buf.length}:${cap}`);
