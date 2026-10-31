@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 /** Browser-level mobile acceptance. Inputs go through Chrome's trusted touch
  * pipeline and its actual hit testing; no element.dispatchEvent / force click.
  * This is a WebView-sized browser check, not physical Android device coverage. */
@@ -61,7 +62,7 @@ async function bodyPoint(p) {
     throw new Error('Clock has no uncovered body point in the actual viewport');
   });
 }
-const shot = (p, name) => p.screenshot({ path: new URL(name + '.png', out).pathname });
+const shot = (p, name) => p.screenshot({ path: fileURLToPath(new URL(name + '.png', out)) });
 const zoom = p => p.locator('.board-viewport-tools').getByRole('button', { name: /^\d+%$/ });
 
 try {

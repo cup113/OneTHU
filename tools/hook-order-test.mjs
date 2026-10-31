@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 /**
  * Hook 顺序护栏（R24 新增，全仓）：**组件体内「早返回之后的 Hook」一律不许存在**。
  *
@@ -18,7 +19,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
 
-const SRC_ROOT = new URL("../apps/desktop/src", import.meta.url).pathname;
+const SRC_ROOT = fileURLToPath(new URL("../apps/desktop/src", import.meta.url));
 const HOOK_RE = /^use[A-Z0-9]/;
 
 /** 收集「非嵌套函数」范围内、顶层语句里的 return / Hook 调用 */

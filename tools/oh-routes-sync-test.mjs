@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 /**
  * OH 路由表**防脱同**护栏（2026-10-12 task-22）：
  *
@@ -9,7 +10,7 @@
 import { readFileSync } from "node:fs";
 import { parseSearchRows } from "./lib/search-rows-parse.mjs";
 
-const ASSET = new URL("../plugins/OneTHU-Harness/assets/routes.json", import.meta.url).pathname;
+const ASSET = fileURLToPath(new URL("../plugins/OneTHU-Harness/assets/routes.json", import.meta.url));
 const parse = parseSearchRows();
 let asset = [];
 try {

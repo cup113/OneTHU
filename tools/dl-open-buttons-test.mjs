@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 /**
  * 下载完成提示「打开文件 / 打开目录」护栏（R25）。
  *
@@ -10,7 +11,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-const SRC = new URL("../apps/desktop/src", import.meta.url).pathname;
+const SRC = fileURLToPath(new URL("../apps/desktop/src", import.meta.url));
 const read = (p) => readFileSync(join(SRC, p), "utf8");
 
 /** 所有「下载成功提示」位点（新增下载点必须登记到这里） */

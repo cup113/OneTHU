@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { fileURLToPath } from "node:url";
 /**
  * OH → 门面接线护栏（2026-10-15，oh-wire / task-2）：白板导航桥 + 首页程序坞 + 收藏落点。
  *
@@ -131,7 +132,7 @@ ok(!!api.ext.tabOpen("boards")?.id, "ext.tabOpen(\"boards\") 放行");
       else if (/\.(ts|tsx)$/.test(e)) files.push(p);
     }
   };
-  walk(new URL("../apps/desktop/src", import.meta.url).pathname);
+  walk(fileURLToPath(new URL("../apps/desktop/src", import.meta.url)));
   const bad = [];
   for (const f of files) {
     for (const line of readFileSync(f, "utf8").split("\n")) {
