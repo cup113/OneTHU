@@ -433,6 +433,23 @@ class SessionExpiredError extends AuthRequiredError {
   }
 }
 
+/** 传输层用 `HTTP <status>` 表达状态码（`validateStatus` 选项），这里取回来归因。 */
+function httpStatusOf(e: unknown): number | null {
+  const m = e instanceof Error ? /^HTTP (\d{3})$/.exec(e.message) : null;
+  return m ? Number(m[1]) : null;
+}
+
+/** 「这一轮的学习会话不被承认」的状态码。401 是明确的未登录；403 是学习域对
+ *  **无会话或陈旧 `_csrf`** 的答复——2026-10-30 日志实录：同一
+ *  `getCurrentAndNextSemester` 在会话过期后连续回 403，静默重登成功后同一请求
+ *  立即 200，且同一时刻 info/card 走同一个 wengine 票仍是 200（死的只是学习域
+ *  自己那份会话，不是网关）。
+ *  这两种都得走下面 #withRelogin 的重建链：此前 403 只是一个裸
+ *  `Error("HTTP 403")`，既不重登也不作废 `_csrf`，界面只能显示「重试」，而重试
+ *  拿的还是同一份死会话与旧凭据去撞，于是永远 403——只有整页重载（新客户端、
+ *  `#csrf` 为空）才会重新建链，这就是「点重试没用、点硬刷新才好」的来由。 */
+const LEARN_SESSION_HTTP = new Set([401, 403]);
+
 /** 登录状态压根没建立起来（例如取不到网页表单里的登录凭据）——与「服务器回了
  *  登录页」区分：前者可能只是一次建链没成，值得先重建再报错，文案也不该说
  *  「已失效」把用户吓去改密码。继承 SessionExpiredError，让 #withRelogin 的
@@ -696,6 +713,8 @@ export class LearnClient {
     } catch (e) {
       // A first probe can explicitly report an expired session before any CSRF
       // exists. Let the same bounded establishment path handle it as login HTML.
+      // 403 不在此列：取凭据页这一步没有可重放的读请求，宿主把它当作「探活失败」，
+      // 由启动链的静默重登兜底（`probeLearnSession` 与启动守卫都依赖这个拒绝语义）。
       if (e instanceof Error && e.message === "HTTP 401") {
         this.lastDebug = "COURSE-PAGE status=401";
         this.lastCsrfDebug = "miss status=401";
@@ -809,8 +828,15 @@ export class LearnClient {
   async #readText(url: string, init: RequestInit): Promise<string> {
     try { return await this.#http.text(url, init, { validateStatus: true }); }
     catch (e) {
-      if (e instanceof Error && e.message === "HTTP 401") {
-        this.lastResponseDebug = "LEARN-READ status=401";
+      const status = httpStatusOf(e);
+      if (status !== null && LEARN_SESSION_HTTP.has(status)) {
+        this.lastResponseDebug = `LEARN-READ status=${status}`;
+        // 只抛标记，**不在这里清 #csrf**：并发的旧请求可能在别的请求已经重建成功后
+        // 才带着 403 回来，它手里的旧凭据不是当前那份——清掉等于把刚装好的新凭据
+        // 也一起废了（#withRelogin 的 `generation !== #sessionGeneration` 快路径
+        // 正是用 `Boolean(#csrf)` 判断「这一代已经重建过」，被清就变成假会话失效）。
+        // 作废旧凭据由 #recoverSession 在单飞锁内完成，那里才是「当前这一代」的边界。
+        this.#http.debug?.(`LEARN-SESSION HTTP ${status} → 交给单飞重建`);
         throw new SessionExpiredError();
       }
       throw e;
