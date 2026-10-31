@@ -45,7 +45,7 @@ on:
         type: string
         default: ""
       version:
-        description: "分叉版本覆盖（形如 0.11.3-2，留空用 tauri.fork.conf.json）。带 release 时必填"
+        description: "分叉版本覆盖（形如 0.11.4-1，留空用 tauri.fork.conf.json）。带 release 时必填"
         type: string
         default: ""
       release:
@@ -83,7 +83,7 @@ jobs:
             exit 1
           fi
           if [ -n "$VERSION" ] && ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$'; then
-            echo "::error::version 必须形如 <主>.<次>.<补丁>-<纯数字>（如 0.11.3-2），当前是 $VERSION"
+            echo "::error::version 必须形如 <主>.<次>.<补丁>-<纯数字>（如 0.11.4-1），当前是 $VERSION"
             exit 1
           fi
           if [ "$RELEASE" = "true" ]; then
@@ -422,7 +422,7 @@ jobs:
             --version "$VERSION" \
             --out release-out/latest.json \
             --releasedAt "$(date -u +%F)" \
-            --notes "基于上游的分叉构建 $VERSION。修复系统日历同步在 HarmonyOS 安卓兼容层上导致的闪退：同步改为差异驱动——内容没变时一次 provider 调用都不发（此前每次同步都要把已写入的事件整批删掉再全量重写，而该兼容层的批量删除会让进程直接消失）；只有真正新增、改动或消失的事件才写，删除始终按单条进行，重复副本仍会自动收敛，同步从数百次写降到两次查询。同步桥接同时加固：改为异步等待、后台异常兜底、连续失败自动熔断。另在「设置 → 诊断 → 复制诊断摘要」里加入日历同步现场（原生侧逐步落盘），便于在没有 adb 通道的设备上定位问题。"
+            --notes "分叉 $VERSION：基线换到上游 0.11.4-fix-3——CLI 运行时改为可选分包（桌面端「安装 CLI」从本仓 Release 取与安装包同版本的 CLI 包，装不上的版本会被应用判为不可用）、周导航滑动与视口铺满、会话恢复与更新 epoch 修正、Windows 启动器不再依赖 PowerShell 模块。分叉侧新增全天事件横幅行（方案 A：落星期列、跨天连续、超出道次折叠成 +N）；网络学堂失败归因修正延续——附件 404 不再说成「登录失效」，已批阅/已过期作业不再因提交页被拒而整页报错；保留凭据文件属主接受 Administrators、系统日历同步诊断权限、托盘/悬浮球保活、系统日历差异同步与自定义日程重复规则。更新源仍指向 cup113/OneTHU。"
       - name: Write release notes
         env:
           VERSION: ${{ inputs.version }}
