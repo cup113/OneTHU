@@ -358,4 +358,42 @@ for (const brokenFile of ['caldav.cfg', 'caldav.cache', 'caldav.local']) {
   eq(f.mod.getLocalEvents().length, 0, 'rejected local event never appears');
   check(!f.files.has('caldav.local'), 'rejected local event never persists');
 }
+{
+  // 重复规则创作侧（grill 2026-10-26）：编辑器设/改/清规则经状态层与 ICS 编解码的往返。
+  // 永久断言：清「重复」必须显式 rrule/exdates=undefined —— UI 侧 {...source} 的 spread
+  // 会把旧值透传回来，这里守住状态层 merge 对显式清除的采纳。
+  const f = await fixture(); await f.mod.configureCloudCal('a@test', 'fake'); await f.mod.syncCloudCal();
+  const day = (mo, d, h = 0, mi = 0) => ics.wallToEpoch(ics.CAMPUS_TZ, { y: 2026, mo, d, h, mi, s: 0 });
+  // ① 本地系列：每周三、截止 11/18（含当天）→ 10/21..11/18 间共 5 场，末场落在截止日
+  const first = day(10, 21, 8); // 2026-10-21 周三
+  const until = ics.wallToEpoch(ics.CAMPUS_TZ, { y: 2026, mo: 11, d: 18, h: 23, mi: 59, s: 59 });
+  await f.mod.putLocalEvent({ ...item('weekly'), start: first, end: first + 3600000, rrule: { freq: 'WEEKLY', interval: 1, byDay: ['WE'], until } });
+  const occ = ics.expandEventSet(f.mod.getLocalEvents(), day(10, 1), day(12, 31, 23, 59));
+  eq(occ.filter(o => o.uid === 'weekly').length, 5, 'weekly with inclusive UNTIL counts the on-end-date occurrence');
+  eq(occ.filter(o => o.uid === 'weekly').at(-1).start, day(11, 18, 8), 'last occurrence lands on the UNTIL day');
+  // ② 未触碰的编辑（UI 透传路径：ev 由 {...source} 展开、无显式 rrule 键）→ COUNT 原样保留
+  await f.mod.putLocalEvent({ ...item('counted'), rrule: { freq: 'WEEKLY', interval: 1, count: 3 } });
+  const counted = f.mod.getLocalEvents().find(e => e.uid === 'counted');
+  await f.mod.saveCalendarEvent({ ...counted, summary: '改名' }, { cloud: false });
+  eq(f.mod.getLocalEvents().find(e => e.uid === 'counted').rrule.count, 3, 'untouched editor save passes source rrule (COUNT) through');
+  // ③ 清「重复」（UI 显式 rrule/exdates=undefined）：merge 必须采纳显式清除
+  await f.mod.saveCalendarEvent({ ...f.mod.getLocalEvents().find(e => e.uid === 'weekly'), rrule: undefined, exdates: undefined }, { cloud: false });
+  const cleared = f.mod.getLocalEvents().find(e => e.uid === 'weekly');
+  eq(cleared.rrule, undefined, 'explicit rrule:undefined defeats spread passthrough');
+  eq(cleared.exdates, undefined, 'exdates cleared together with the rule');
+  eq(ics.expandEventSet(f.mod.getLocalEvents(), day(10, 1), day(12, 31, 23, 59)).filter(o => o.uid === 'weekly').length, 1, 'cleared series collapses to a single event');
+  const persisted = JSON.parse(f.files.get('caldav.local')).events.find(e => e.uid === 'weekly');
+  check(!('rrule' in persisted) && !('exdates' in persisted), 'cleared rule does not linger in the persisted local file');
+  // ④ 云侧改规则：master 换 RRULE 重写资源，同资源 override 兄弟实例保留
+  const master = { ...item('cloud-series'), start: first, end: first + 3600000, rrule: { freq: 'WEEKLY', interval: 1, byDay: ['WE'] } };
+  const override = { ...item('cloud-series', '单场改期'), recurrenceId: first + 14 * 86400000, start: first + 15 * 86400000, end: first + 15 * 86400000 + 3600000 };
+  f.add('a@test', [master, override], 'cloud-series');
+  await f.mod.syncCloudCal();
+  const current = f.mod.getCloudEvents().find(e => e.uid === 'cloud-series' && e.recurrenceId === undefined);
+  await f.mod.putCloudEvent({ ...current, rrule: { freq: 'DAILY', interval: 1 } });
+  const href = [...f.store('a@test').keys()].find(h => h.includes('cloud-series'));
+  const reparsed = ics.parseIcs(f.store('a@test').get(href).body);
+  eq(reparsed.filter(e => e.recurrenceId === undefined)[0].rrule.freq, 'DAILY', 'cloud master adopts the rebuilt rule');
+  check(reparsed.some(e => e.recurrenceId !== undefined), 'sibling override survives a master rule rewrite');
+}
 console.log(`cloud calendar: ${checks} offline integration checks passed`);

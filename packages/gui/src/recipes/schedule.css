@@ -6,9 +6,11 @@
  *     大标题都可以不要，就留几个按钮用来调整筛选，铺满！」
  *   「顶部按钮也不要，全部直接悬浮在平铺的课表上，缩减到最小一个按钮，点击它再展开
  *     这些设置。」
- * 于是本页的结构是：**一块铺满的事件区 + 一个悬浮圆钮 + 它的设置浮层**。
+ * 于是本页的结构是：**一块铺满的事件区 + 一颗可拖动的悬浮圆钮 + 它的设置面板**。
  * 周视图是唯一时间轴语义（桌面/手机都是 7 列），列表视图仍作为切换项保留；
- * 同步、筛选（显示时段 / 学期周跳）、跳转、增删改、导出、系统日历、收藏全在浮层里，
+ * 同步、筛选（显示时段 / 学期周跳）、跳转、增删改、导出、系统日历、收藏全在面板里，
+ * 「＋ 添加日程」在面板首行（不滚动即可见）；面板桌面走锚定 Popover、手机走底部 Sheet，
+ * 两种容器里它都只产生一个滚动容器（见 §5 的单滚动契约）。
  * 作业「前往」开新作业标签，课程给「前往（网络学堂该课）/ 寻迹」——都 forceNew。
  *
  * 高度链靠 html.is-schedule-page 驱动（由 Shell 在"本页是当前页面"时挂到
@@ -142,11 +144,16 @@ html:root.is-schedule-page .schedule-workspace > .schedule-stage {
   scroll-padding-block: var(--og-space-3);
 }
 
-.schedule-day-head {
+/* 表头 + 全天横幅行：一起吸顶（整块高度由页面量成 availH 的减项），
+   7 列与下面的时间轴共用同一列网格。 */
+.schedule-head {
   flex: none;
   position: sticky;
   top: 0;
   z-index: var(--og-z-header);
+  background: var(--og-surface-1);
+}
+.schedule-day-head {
   padding-block: var(--og-space-3) var(--og-space-2);
   background: var(--og-surface-1);
   border-bottom: 1px solid var(--og-line-2);
@@ -177,6 +184,72 @@ html:root.is-schedule-page .schedule-workspace > .schedule-stage {
 .schedule-day-cell:first-child { border-left: 0; }
 .schedule-day-cell.is-today,
 .schedule-day-cell.is-today small { color: var(--og-accent-strong); }
+
+/* ── 2.1 全天横幅行：横幅落在星期列上，跨天连续、每日重复合并、逐列 +N ──
+   行高取胶囊高度令牌（24px），步进 = 行高 + 4px；可见道数由页面给（桌面 3 / 手机 2）。
+   几何（left/width/top）由页面按列百分比算，这里只管外观。 */
+.schedule-allday {
+  --og-c-schedule-allday-step: calc(var(--og-ctl-chip-h-sm) + var(--og-space-1));
+  /* 横幅与列边界之间的留白；手机列窄，收到 2px 多让一个字给标题 */
+  --og-c-schedule-allday-inset: var(--og-space-1);
+  display: flex;
+  border-bottom: 1px solid var(--og-line-1);
+  background: var(--og-surface-1);
+}
+/* 「全天」沟槽标：贴第一行顶部对齐，不随行数上下浮动 */
+.schedule-allday-gutter {
+  flex: none;
+  width: var(--og-space-8);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: calc(var(--og-space-1) / 2);
+  font-size: var(--og-text-micro);
+  line-height: var(--og-ctl-chip-h-sm);
+  color: var(--og-content-3);
+}
+.schedule-allday-layer {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  /* 行数（含 +N 那一行）由页面写成自定义属性；高度必须与横幅的 top 同源 */
+  height: calc(
+    (var(--og-c-schedule-allday-rows, 0) + var(--og-c-schedule-allday-overflow, 0))
+      * var(--og-c-schedule-allday-step)
+    + var(--og-space-1)
+  );
+}
+/* 列刻线 / 今天微底色：与画布的 .schedule-col 同一口径，空列也看得见网格 */
+.schedule-allday-day {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-left: 1px solid var(--og-line-1);
+  pointer-events: none;
+}
+.schedule-allday-day:first-child { border-left: 0; }
+.schedule-allday-day.is-today { background: color-mix(in srgb, var(--og-accent) 6%, transparent); }
+
+.schedule-allday-slot,
+.schedule-allday-more-slot { position: absolute; display: flex; z-index: 1; }
+.schedule-allday-slot > .schedule-allday-banner { width: 100%; min-width: 0; }
+/* 横幅只有一种外观：全天事件是同一种东西，来源（云/本）不是扫描时该读的维度。
+   毛玻璃在整条带上要画 N 个，去掉；墨色压到正文级，窄列上才读得清。 */
+.schedule-allday-banner {
+  --og-c-chip-ink: var(--og-content-1);
+  backdrop-filter: none;
+  background-image: none;
+}
+/* 溢出指示器：描边胶囊，落在自己的一行上（不压任何横幅） */
+.schedule-allday-more {
+  --og-c-chip-fill: var(--og-surface-1);
+  --og-c-chip-ink: var(--og-content-3);
+  --og-c-chip-line: var(--og-line-2);
+}
+.schedule-allday-more:hover {
+  --og-c-chip-ink: var(--og-content-1);
+  --og-c-chip-line: var(--og-content-3);
+}
 
 .schedule-gutter { position: relative; }
 .schedule-gutter-label {
@@ -265,24 +338,34 @@ html:root.is-schedule-page .schedule-workspace > .schedule-stage {
 html:root.is-phone .schedule-floats { left: var(--og-space-2); bottom: calc(var(--og-workbench-header-h) + var(--og-space-8)); max-width: 74vw; }
 .schedule-floats > * { pointer-events: auto; }
 
-/* ── 4. 唯一常驻控件：悬浮小圆钮（点开设置浮层） ── */
+/* ── 4. 唯一常驻控件：悬浮小圆钮（点开设置面板；可拖动、位置记忆） ── */
 .schedule-dock {
   position: absolute;
   right: var(--og-space-3);
-  /* 浮钮躲到 OneShot 胶囊之上：课表铺满到窗口底边，但控件不会被胶囊压住 */
+  /* 浮钮躲到 OneShot 胶囊之上：课表铺满到窗口底边，但控件不会被胶囊压住；
+     拖动记忆（Schedule.tsx 的 dockPos）以内联 right/bottom 覆盖这两个默认值 */
   bottom: var(--og-c-schedule-dock-bottom);
   z-index: var(--og-z-board-tools);
+  /* 可拖（与硬刷新浮钮同一手势协议）：拖动势不落进滚动；指针即抓手 */
+  touch-action: none;
+  cursor: grab;
 }
+.schedule-dock.is-dragging { cursor: grabbing; }
 
-/* ── 5. 设置浮层：周切换 / 视图 / 筛选 / 学期周 / 同步导出 / 新建 / 收藏 ── */
+/* ── 5. 设置面板：新建 / 周切换 / 视图 / 筛选 / 学期周 / 同步导出 / 收藏 ──
+   单滚动契约（修复双滚动条）：每种容器里只有一个滚动容器——
+     · 桌面锚定 Popover：外壳 .og-float 滚（OneGUI 锚定族既定口径：placeFixed 给
+       内联 maxHeight，内容超高内部滚），面板自身不设 max-height/overflow；
+     · 手机底部 Sheet：.og-panel-body 滚。
+   任何一处都不得再给 .schedule-panel 叠加第二个滚动容器（曾经的
+   max-height:70dvh + overflow:auto 嵌在外壳滚动里就是双滚动条的来源）。 */
+.og-float .schedule-panel { max-height: none; overflow: visible; }
+.og-panel-body .schedule-panel { width: auto; }
 .schedule-panel {
   display: flex;
   flex-direction: column;
   gap: var(--og-space-3);
   width: min(calc(var(--og-schedule-sync-width) + var(--og-space-10)), calc(100vw - var(--og-space-8)));
-  max-height: 70dvh;
-  overflow: auto;
-  overscroll-behavior: contain;
 }
 .schedule-panel-block {
   display: flex;
@@ -322,6 +405,10 @@ html:root.is-phone .schedule-timeline { scroll-padding-top: var(--og-space-3); }
 html:root.is-phone .schedule-day-head { padding-block: var(--og-space-2) var(--og-space-1); }
 html:root.is-phone .schedule-gutter,
 html:root.is-phone .schedule-head-gutter { width: var(--og-space-7); }
+/* 手机 7 列只有 ~51px：留白与内边距一起收紧，标题多让出两三个字（更长的看 +N / 编辑器） */
+html:root.is-phone .schedule-allday { --og-c-schedule-allday-inset: calc(var(--og-space-1) / 2); }
+html:root.is-phone .schedule-allday-gutter { width: var(--og-space-7); }
+html:root.is-phone .schedule-allday-banner { --og-c-chip-pad: 0; }
 html:root.is-phone .schedule-block { padding: 1px calc(var(--og-space-1) / 2); }
 /* 手机 7 列很窄：块里只留课程名（最多两行），地点/教师点开详情看 */
 html:root.is-phone .schedule-block-title { font-size: var(--og-text-micro); line-height: 1.25; }

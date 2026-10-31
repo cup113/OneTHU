@@ -15,10 +15,12 @@ import {
   Input,
   KeyValue,
   List,
+  Menu,
   Modal,
   Popover,
   Row,
   Select,
+  Sheet,
   Spacer,
   Stack,
   Surface,
@@ -30,10 +32,13 @@ import {
  * 日期模型：单一 anchor 任意日期，不受学期边界限制（1970 起）；
  * 时间轴取 anchor 所在周、列表取 anchor 所在月；筛选器自绘（无原生日期控件）。
  * 三种模式共用：作业 DDL / 云日历 / 系统日历与 .ics / 日程编辑器。
- * UI：OneGUI（Modal/Popover/Chip/Checkbox/Field/Text/Surface/Divider/Banner），
+ * UI：OneGUI（Modal/Popover/Sheet/Chip/Checkbox/Field/Text/Surface/Divider/Banner），
  * 内联样式只保留几何定位、网格线令牌与课块数据色（lib/courseColor 口径）。
+ * 唯一常驻控件是一颗可拖动的悬浮圆钮：点开设置面板（桌面锚定 Popover、手机底部 Sheet），
+ * 「＋ 添加日程」在面板首行——不滚动即可见；每种容器里只有一个滚动容器
+ * （桌面=浮层外壳 .og-float，手机=Sheet 正文 .og-panel-body，见 schedule.css §5）。
  */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { openTab } from "../state/explorer.js";
 import { useIsSimpleLike } from "../state/experienceMode.js";
 import { openHomeworkRow } from "../lib/homeworkEntry.js";
@@ -43,7 +48,7 @@ import { Card, ErrorNote, PageHead } from "../components/Layout.js";
 import { IconRefresh, IconSchedule } from "../components/Icons.js";
 import { useCalendar, getCampusSnapshot, useLearnData, invalidateLearnCache, logPageError } from "../state/data.js";
 import { useIgnoredHw } from "../state/hwIgnore.js";
-import { useScheduleWindow, WINDOW_PRESETS, FULL_DAY, hhmm as hhmmWin } from "../state/scheduleWindow.js";
+import { useScheduleWindow, WINDOW_PRESETS, hhmm as hhmmWin } from "../state/scheduleWindow.js";
 import { cacheGet, cacheSet } from "../state/cache.js";
 import { isAuthError } from "@onethu/core";
 import { softRecover } from "../lib/reload.js";
@@ -60,11 +65,13 @@ import { info } from "../lib/clients.js";
 import { toHomework, useExternalHomework } from "../state/exthw.js";
 import { useApp } from "../state/context.js";
 import { usePlatformLayout, useTouchInteraction } from "../state/usePlatformLayout.js";
+import { useIsPhone } from "../state/phoneSheets.js";
 import { courseColor, SRC_COLOR } from "../lib/courseColor.js";
 import { useNotifyBackend } from "../components/useNotifyBackend.js";
 import { openLocalPath } from "../lib/localFile.js";
 import { scheduleHomework, type ScheduleHomework } from "../lib/scheduleHomework.js";
 import { calendarDraftRange } from "../lib/calendarDraft.js";
+import { ALLDAY_ROWS_DESKTOP, ALLDAY_ROWS_PHONE, layoutAllDay, weekDaySpan, type AllDayOccurrence } from "../lib/alldayLayout.js";
 import { appendSecondarySchedule } from "../lib/scheduleSecondary.js";
 import { installWeekSwipe, type WeekNavigation } from "../lib/weekSwipe.js";
 
@@ -103,6 +110,12 @@ const parseYmd = (s: string): Date => new Date(Number(s.slice(0, 4)), Number(s.s
 const mondayOf = (d: Date): Date => new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() + 6) % 7));
 const MIN_ANCHOR = new Date(1970, 0, 5);
 const MAX_ANCHOR = new Date(2099, 11, 28);
+/** 校园墙钟日序号（自 epoch 起的天数）：全天事件按校园日历日归属，不随设备时区漂移。
+ *  与表头日期用同一坐标系：表头日期由本地 Date 的年月日给出，这里也按年月日折算。 */
+const campusDayIndex = (ms: number): number => {
+  const w = caldav.epochToWall("Asia/Shanghai", ms);
+  return Math.round(Date.UTC(w.y, w.mo - 1, w.d) / 86_400_000);
+};
 
 /** 网格条目（课表条目 + 云/本日程事件） */
 interface GridEntry {
@@ -321,6 +334,53 @@ function detectSemester(d: Date, list: SemInfo[]): { sem: SemInfo; weekNo: numbe
 }
 
 /* ---------- 事件编辑器草稿（页面级：两视图共用的底部编辑卡） ---------- */
+/** 编辑器可表达的重复模式（IcsRrule 的受控子集；grill 2026-10-26：无每年/无次数 UI） */
+type RepeatMode = "none" | "daily" | "weekly" | "biweekly" | "monthly";
+interface RepeatDraft {
+  mode: RepeatMode;
+  /** 每周系选中的星期（1=周一..7=周日）；空 = 首次切入每周时按首场日期补默认 */
+  byDay: number[];
+  /** 截止日（Y-M-D，含当天）；空串 = 永不 */
+  until: string;
+}
+/** ICS 星期序（MO..SU）↔ 应用 dayOfWeek（1..7，周一=1；与 DAY_NAMES 下标一致） */
+const ICS_WEEKDAYS: readonly string[] = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
+const dayOfWeekOf = (ymd: string): number => {
+  const t = new Date(ymd.replace(/-/g, "/")).getDay();
+  return t === 0 ? 7 : t;
+};
+/** 既有事件 rrule → 编辑器受控形态。byDay 缺省回填首场星期；until 取校园时区当日（含当天） */
+function repeatDraftOf(src: caldav.IcsEvent | undefined, dateYmd: string): RepeatDraft {
+  const r = src?.rrule;
+  if (!r) return { mode: "none", byDay: [], until: "" };
+  const mode: RepeatMode = r.freq === "DAILY" ? "daily"
+    : r.freq === "MONTHLY" ? "monthly"
+    : r.freq === "WEEKLY" && r.interval > 1 ? "biweekly" : "weekly";
+  const byDay = (r.byDay ?? []).map((w) => ICS_WEEKDAYS.indexOf(w) + 1).filter((n) => n >= 1);
+  let until = "";
+  if (r.until !== undefined) {
+    const w = caldav.epochToWall(caldav.CAMPUS_TZ, r.until);
+    until = `${w.y}-${padN(w.mo)}-${padN(w.d)}`;
+  }
+  return { mode, byDay: byDay.length ? byDay : [dayOfWeekOf(dateYmd)], until };
+}
+/** 受控形态 → IcsRrule（mode=none → undefined）。UNTIL 取截止日 23:59:59（展开含当天全场） */
+function rruleOfDraft(draft: RepeatDraft): caldav.IcsRrule | undefined {
+  if (draft.mode === "none") return undefined;
+  const until = draft.until
+    ? (() => {
+      const [y, mo, d] = draft.until.split("-").map(Number);
+      return caldav.wallToEpoch(caldav.CAMPUS_TZ, { y: y!, mo: mo!, d: d!, h: 23, mi: 59, s: 59 });
+    })()
+    : undefined;
+  return {
+    freq: draft.mode === "daily" ? "DAILY" : draft.mode === "monthly" ? "MONTHLY" : "WEEKLY",
+    interval: draft.mode === "biweekly" ? 2 : 1,
+    ...(draft.mode === "weekly" || draft.mode === "biweekly" ? { byDay: draft.byDay.map((n) => ICS_WEEKDAYS[n - 1]!) } : {}),
+    ...(until !== undefined ? { until } : {}),
+  };
+}
+
 interface Draft {
   uid?: string;
   source?: caldav.IcsEvent;
@@ -337,6 +397,11 @@ interface Draft {
   originalCloud: boolean; // 编辑中的是云端事件
   /** 「在桌面小组件显示」：写进事件的私有标记（X-ONETHU-WIDGET），勾了才进桌面「今天」卡片 */
   widget: boolean;
+  /** 重复规则（受控子集）。repeatTouched=false 时保存原样透传 source.rrule（保 COUNT 等 UI 外字段） */
+  repeat: RepeatDraft;
+  repeatTouched: boolean;
+  /** 导入的「多天+重复」系列不开规则控件（grill 2026-10-26：跨天×重复互斥），维持透传+标签 */
+  repeatLocked: boolean;
 }
 
 const emptyDraft = (date: string, canCloud: boolean): Draft => ({
@@ -344,7 +409,26 @@ const emptyDraft = (date: string, canCloud: boolean): Draft => ({
   toCloud: canCloud, originalCloud: false,
   // 默认不勾：自定义日程一直不上小组件，勾了才上（保持既有行为，避免存量日程突然挤进卡片）
   widget: false,
+  repeat: { mode: "none", byDay: [], until: "" }, repeatTouched: false, repeatLocked: false,
 });
+
+/* ---------- 悬浮圆钮拖动位置（与硬刷新浮钮同一手势协议，Layout.tsx HardRefreshButton） ----------
+ * 圆钮平时停在 CSS 默认位（右下、躲开 OneShot 胶囊）；用户拖过之后以 right/bottom
+ * （相对事件区 stage）记忆在本地，跨会话保持。没拖过就不写内联样式，默认几何不变。 */
+interface DockPos { right: number; bottom: number }
+const DOCK_POS_KEY = "onethu.schedule.dock-pos.v1";
+function readDockPos(): DockPos | null {
+  try {
+    const raw = localStorage.getItem(DOCK_POS_KEY);
+    if (!raw) return null;
+    const v = JSON.parse(raw) as Partial<DockPos>;
+    if (typeof v.right === "number" && typeof v.bottom === "number" &&
+      Number.isFinite(v.right) && Number.isFinite(v.bottom) && v.right >= 0 && v.bottom >= 0) {
+      return { right: v.right, bottom: v.bottom };
+    }
+  } catch { /* 坏数据就当没拖过 */ }
+  return null;
+}
 
 export function SchedulePage() {
   const uiLocale = useUiLocale();
@@ -375,10 +459,18 @@ export function SchedulePage() {
   /** 设置浮层开关：本页唯一常驻控件是事件区上那颗悬浮圆钮，点开就是这份设置面板 */
   const [panelOpen, setPanelOpen] = useState(false);
   const dockRef = useRef<HTMLDivElement | null>(null);
+  /** 圆钮拖动：位置记忆 + 跟手位移 + 拖完吞掉那次 click（协议见 Layout.tsx HardRefreshButton） */
+  const [dockPos, setDockPos] = useState<DockPos | null>(readDockPos);
+  const [dockDragging, setDockDragging] = useState(false);
+  const dockDragRef = useRef<{ x: number; y: number; right: number; bottom: number; moved: boolean; pointerId: number } | null>(null);
+  const dockPosRef = useRef<DockPos | null>(dockPos);
+  const dockSkipClick = useRef(false);
   /** 视图模式：时间轴（周网格 24h）/ 列表（月历+所选日清单）。
    *  时间轴在任何端都是"一周"（7 列），手机不降级成单日页。 */
   const tier = usePlatformLayout();
   const touchInteraction = useTouchInteraction();
+  /** 手机形态（触屏 + 窄窗，phoneSheets 单一来源）：设置面板走底部 Sheet 而非锚定 Popover */
+  const phoneUi = useIsPhone();
   const [mode, setMode] = useState<"timetable" | "agenda">("timetable");
   const modeTouched = useRef(false);
   const pickMode = (m: "timetable" | "agenda"): void => {
@@ -514,11 +606,12 @@ export function SchedulePage() {
     const w = caldav.epochToWall("Asia/Shanghai", ms);
     return `${padN(w.h)}:${padN(w.mi)}`;
   };
-  /** 时间轴条目 = 日期窗课程（考试标红）+ 云/本日程展开（全天走芯片行） */
-  const { entries, allDayChips } = useMemo<{ entries: GridEntry[]; allDayChips: Array<{ label: string; src: "cloud" | "local"; uid?: string }> }>(() => {
+  /** 时间轴条目 = 日期窗课程（考试标红）+ 云/本日程展开（全天单独进横幅行） */
+  const { entries, allDayOcc } = useMemo<{ entries: GridEntry[]; allDayOcc: AllDayOccurrence[] }>(() => {
     const [loD, hiD] = viewWindow;
     const lo = new Date(loD.getFullYear(), loD.getMonth(), loD.getDate()).getTime();
     const hi = new Date(hiD.getFullYear(), hiD.getMonth(), hiD.getDate()).getTime() + 86_399_999;
+    const weekStartDay = Math.round(Date.UTC(loD.getFullYear(), loD.getMonth(), loD.getDate()) / 86_400_000);
     const raw = (windowRows ?? campus.data?.schedule ?? []) as Array<GridEntry & { category?: string }>;
     const inWeek: GridEntry[] = raw
       .map((e) => ({ ...e, src: e.category?.includes("考试") ? ("exam" as const) : e.src }))
@@ -527,7 +620,7 @@ export function SchedulePage() {
         const t = parseYmd(e.date).getTime();
         return t >= lo && t <= hi;
       });
-    const chips: Array<{ label: string; src: "cloud" | "local"; uid?: string }> = [];
+    const allDay: AllDayOccurrence[] = [];
     const WD_INDEX = (ms: number): number => {
       const w = caldav.epochToWall("Asia/Shanghai", ms);
       return (new Date(Date.UTC(w.y, w.mo - 1, w.d)).getUTCDay() + 6) % 7;
@@ -535,7 +628,11 @@ export function SchedulePage() {
     for (const [evts, src] of [[cal.cloudEvents, "cloud"], [cal.localEvents, "local"]] as const) {
       for (const o of caldav.expandEventSet(evts, lo, hi)) {
         if (o.allDay) {
-          chips.push({ label: o.summary, src, uid: o.uid });
+          // 全天不展开成块：投影到周内天下标交给横幅行（列表视图不需要）
+          if (mode === "timetable") {
+            const span = weekDaySpan(o.start, o.end, campusDayIndex, weekStartDay);
+            if (span) allDay.push({ uid: o.uid, summary: o.summary, src, ...span });
+          }
           continue;
         }
         for (let start = Math.max(o.start, lo); start < Math.min(o.end, hi + 1);) {
@@ -557,8 +654,18 @@ export function SchedulePage() {
     }
     // 重叠缩略：≥3 件重叠合并成"N 件事"簇块（扫描线极大区间）
     const clustered = clusterize(inWeek);
-    return { entries: clustered, allDayChips: chips };
-  }, [uiLocale, viewWindow, windowRows, campus.data, cal.cloudEvents, cal.localEvents, deadlines]);
+    return { entries: clustered, allDayOcc: allDay };
+  }, [uiLocale, mode, viewWindow, windowRows, campus.data, cal.cloudEvents, cal.localEvents, deadlines]);
+
+  /** 全天横幅行：可见道次上限按端（桌面 3 / 手机 2），超出的按列折叠成 +N */
+  const allDayCap = phoneUi ? ALLDAY_ROWS_PHONE : ALLDAY_ROWS_DESKTOP;
+  const allday = useMemo(
+    () => layoutAllDay(allDayOcc, allDayCap),
+    [uiLocale, allDayOcc, allDayCap],
+  );
+  /** +N 弹层：记下被点的那颗胶囊（Menu 自己负责落位、Esc、点外关闭） */
+  const [allDayMore, setAllDayMore] = useState<{ day: number; el: HTMLElement } | null>(null);
+  useEffect(() => { setAllDayMore(null); }, [weekStart, mode]);
 
   /* ── 铺满：可用高度 → 坐标轴（先定轴，layout/裁剪/渲染都跟着走） ── */
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -585,7 +692,7 @@ export function SchedulePage() {
       ro.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, [mode, allDayChips.length, panelOpen]);
+  }, [mode, allday.visibleRows, allday.hasOverflow, panelOpen]);
 
   /** 收紧后的显示区间 + 每分钟像素：整周课表一屏放完（见 fitAxis） */
   const axis = useMemo(() => fitAxis(entries, win, availH), [uiLocale, entries, win, availH]);
@@ -685,6 +792,100 @@ export function SchedulePage() {
     setAnchor(clampAnchor(new Date(base.getTime() + ((jumpWeek - 1) * 7 + 2) * 86_400_000))); // 周三，稳落周内
   };
 
+  /* ---------- 悬浮圆钮拖动：过阈值才位移；拖动期间收起面板；松手记忆位置 ---------- */
+  /** 圆钮的定位宿主（offsetParent = 事件区 stage，position:relative） */
+  const dockHost = (): HTMLElement | null => {
+    const el = dockRef.current;
+    const host = el?.offsetParent;
+    return host instanceof HTMLElement ? host : null;
+  };
+  /** 当前 right/bottom（拖动没记忆时从实测量反推，保证从现状位置继续拖） */
+  const dockEdge = (): DockPos | null => {
+    const el = dockRef.current;
+    const host = dockHost();
+    if (!el || !host) return null;
+    const er = el.getBoundingClientRect();
+    const hr = host.getBoundingClientRect();
+    return { right: hr.right - er.right, bottom: hr.bottom - er.bottom };
+  };
+  const onDockPointerDown = (e: ReactPointerEvent<HTMLElement>): void => {
+    if (e.button !== 0) return;
+    dockSkipClick.current = false;
+    const start = dockPos ?? dockEdge();
+    if (!start) return;
+    dockDragRef.current = { x: e.clientX, y: e.clientY, right: start.right, bottom: start.bottom, moved: false, pointerId: e.pointerId };
+    // 指针捕获：快甩出按钮也能继续拖；未过阈值前位置与点击都不受影响
+    // （捕获与 click 必须落在同一元素上，否则 click 会重定目标到捕获元素、按钮收不到）
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onDockPointerMove = (e: ReactPointerEvent<HTMLElement>): void => {
+    const d = dockDragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    const dx = e.clientX - d.x;
+    const dy = e.clientY - d.y;
+    if (!d.moved) {
+      if (Math.hypot(dx, dy) < (e.pointerType === "touch" ? 12 : 10)) return;
+      d.moved = true;
+      setDockDragging(true);
+      setPanelOpen(false); // 浮层不追着钮跑；拖动中保持收起
+    }
+    const el = dockRef.current;
+    const host = dockHost();
+    if (!el || !host) return;
+    const hr = host.getBoundingClientRect();
+    const er = el.getBoundingClientRect();
+    const next = {
+      right: Math.max(4, Math.min(d.right - dx, hr.width - er.width - 4)),
+      bottom: Math.max(4, Math.min(d.bottom - dy, hr.height - er.height - 4)),
+    };
+    dockPosRef.current = next;
+    setDockPos(next);
+  };
+  const onDockPointerUp = (e: ReactPointerEvent<HTMLElement>): void => {
+    const d = dockDragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    dockDragRef.current = null;
+    setDockDragging(false);
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    if (!d.moved) return;
+    dockSkipClick.current = true;
+    const p = dockPosRef.current;
+    if (p) {
+      try { localStorage.setItem(DOCK_POS_KEY, JSON.stringify(p)); } catch { /* 存不下就只记内存 */ }
+    }
+  };
+  /* 手动摆过之后，窗口缩放/旋转也要留在事件区里（默认位不受影响：那是 CSS 算的） */
+  const hasDockPos = dockPos !== null;
+  useEffect(() => {
+    if (!hasDockPos) return undefined;
+    const clamp = (): void => {
+      const el = dockRef.current;
+      const host = dockHost();
+      if (!el || !host) return;
+      const hr = host.getBoundingClientRect();
+      const er = el.getBoundingClientRect();
+      setDockPos((p) => {
+        if (!p) return p;
+        const next = {
+          right: Math.max(4, Math.min(p.right, hr.width - er.width - 4)),
+          bottom: Math.max(4, Math.min(p.bottom, hr.height - er.height - 4)),
+        };
+        if (next.right === p.right && next.bottom === p.bottom) return p;
+        dockPosRef.current = next;
+        try { localStorage.setItem(DOCK_POS_KEY, JSON.stringify(next)); } catch { /* 内存仍然更新 */ }
+        return next;
+      });
+    };
+    clamp();
+    window.addEventListener("resize", clamp);
+    const ro = new ResizeObserver(clamp);
+    if (dockRef.current?.offsetParent instanceof HTMLElement) ro.observe(dockRef.current.offsetParent);
+    return () => {
+      window.removeEventListener("resize", clamp);
+      ro.disconnect();
+    };
+  }, [hasDockPos]);
+
   /* ---------- 两视图共用：同步 / 课表上云 / 系统日历 / 事件编辑 ---------- */
   const canCloud = cal.configured;
 
@@ -740,16 +941,22 @@ export function SchedulePage() {
     const w = caldav.epochToWall("Asia/Shanghai", src.start);
     const we = caldav.epochToWall("Asia/Shanghai", src.end);
     const lastDay = caldav.epochToWall("Asia/Shanghai", src.allDay ? src.end - 1 : src.end);
+    const date = `${w.y}-${padN(w.mo)}-${padN(w.d)}`;
+    const endDate = `${lastDay.y}-${padN(lastDay.mo)}-${padN(lastDay.d)}`;
     setDraft({
       source: { ...src },
       sourceEmail: kind === "cloud" ? cal.email : undefined,
-      uid: src.uid, title: src.summary, date: `${w.y}-${padN(w.mo)}-${padN(w.d)}`,
-      endDate: `${lastDay.y}-${padN(lastDay.mo)}-${padN(lastDay.d)}`,
+      uid: src.uid, title: src.summary, date,
+      endDate,
       start: `${padN(w.h)}:${padN(w.mi)}`, end: `${padN(we.h)}:${padN(we.mi)}`,
       allDay: !!src.allDay, location: src.location ?? "", note: src.description ?? "",
       toCloud: kind === "cloud", originalCloud: kind === "cloud",
       // 原样带回：非 Android 上这个勾选框不显示，保存时也不会把标记抹掉
       widget: src.onethuWidget === true,
+      repeat: repeatDraftOf(src, date),
+      repeatTouched: false,
+      // 多天系列（master 跨日）锁规则控件：改规则会连系列时长一起改，维持透传（互斥决策）
+      repeatLocked: !!src.rrule && endDate !== date,
     });
   };
   /** 列表行：云/本可编辑，课程/考试/作业打开详情。 */
@@ -773,8 +980,18 @@ export function SchedulePage() {
     setMsg(null);
     try {
       if (draft.originalCloud && draft.sourceEmail !== cal.email) throw new Error(i18n("pages.schedule.7e335ee498e8"));
+      // 重复规则校验只在用户动过规则控件时做；未动过走透传（多天锁定系列同）
+      const repeatEdited = draft.repeatTouched && !draft.repeatLocked;
+      if (repeatEdited) {
+        if ((draft.repeat.mode === "weekly" || draft.repeat.mode === "biweekly") && draft.repeat.byDay.length === 0) {
+          throw new Error(i18n("pages.schedule.f6ddcc767765"));
+        }
+        if (draft.repeat.until && draft.repeat.until < draft.date) throw new Error(i18n("pages.schedule.c80254eaafba"));
+      }
+      // 重复与跨天互斥：用户激活重复后，系列时长收敛为单日（锁定系列不受影响）
+      const repeatActive = repeatEdited && draft.repeat.mode !== "none";
       const allDay = draft.allDay;
-      const { start, end } = calendarDraftRange(draft);
+      const { start, end } = calendarDraftRange(repeatActive ? { ...draft, endDate: draft.date } : draft);
       const uid = draft.uid ?? `onethu-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}@onethu`;
       const ev: caldav.IcsEvent = {
         ...draft.source,
@@ -785,6 +1002,11 @@ export function SchedulePage() {
         // 桌面小组件「今天」卡片：勾了才带上这个私有标记（缺省不写 = 不上卡片）
         onethuWidget: draft.widget || undefined,
       };
+      if (repeatEdited) {
+        // 显式赋值覆盖 spread 透传：清「重复」必须真清掉 rrule；改规则则清掉绑定旧场次的排除场
+        ev.rrule = rruleOfDraft(draft.repeat);
+        ev.exdates = undefined;
+      }
       await saveCalendarEvent(ev, { cloud: draft.toCloud, originalCloud: draft.uid ? draft.originalCloud : undefined });
       setDraft(null);
       setMsg(i18n("pages.schedule.193f229df3d9"));
@@ -854,6 +1076,155 @@ export function SchedulePage() {
     setMsg(i18n("pages.schedule.b2e93997a40b", { courseName: String(d.courseName) }));
     newTab("learn", null, i18n("pages.schedule.60db1afb4022"));
   };
+  const panelBody = (
+    <div className="schedule-panel">
+      {/* 主要动作置顶：新建 + 收藏本页（原先压在最底行，滚动才能看见） */}
+      <div className="schedule-panel-row">
+        <Btn
+          className="schedule-panel-grow"
+          variant="solid"
+          tone="brand"
+          size="sm"
+          onClick={() => { setMsg(null); setDraft(emptyDraft(defaultDraftDate, canCloud)); setPanelOpen(false); }}
+        >{i18n("pages.schedule.5e6a5170f6ac")}</Btn>
+        <PageAtomStar atomKey="schedule" title={i18n("pages.schedule.a14f23af7016")} />
+      </div>
+
+      {/* 周导航：时间轴恒以周为单位 */}
+      <div className="schedule-panel-block">
+        <Text slot="micro" tone="faint">{i18n("pages.schedule.f041b6d0cdd4")}</Text>
+        <div className="schedule-panel-row">
+          <Btn variant="outline" size="sm" titleAttr={mode === "timetable" ? i18n("pages.schedule.c0b859346782") : i18n("pages.schedule.f9e727223456")} aria-label={mode === "timetable" ? i18n("pages.schedule.c0b859346782") : i18n("pages.schedule.f9e727223456")} onClick={() => moveAnchor(-1)}>‹</Btn>
+          <Btn
+            className="schedule-panel-grow schedule-panel-label"
+            variant="outline"
+            size="sm"
+            aria-expanded={calOpen}
+            titleAttr={i18n("pages.schedule.a80ca7344396")}
+            onClick={() => setCalOpen((v) => !v)}
+          >{label}</Btn>
+          <Btn variant="outline" size="sm" titleAttr={mode === "timetable" ? i18n("pages.schedule.31da7d33b80d") : i18n("pages.schedule.3e0b634699d4")} aria-label={mode === "timetable" ? i18n("pages.schedule.31da7d33b80d") : i18n("pages.schedule.3e0b634699d4")} onClick={() => moveAnchor(1)}>›</Btn>
+          <Btn variant="outline" size="sm" onClick={() => { setAnchor(new Date()); setSelected(todayStr); }}>{i18n("pages.schedule.b4c6c3eb0bce")}</Btn>
+        </div>
+        {calOpen ? (
+          <div className="schedule-cal">
+            <div className="schedule-cal-head">
+              <Btn variant="ghost" size="sm" titleAttr={i18n("pages.schedule.43cecd06c54d")} onClick={() => calShift(-12)}>«</Btn>
+              <Btn variant="ghost" size="sm" titleAttr={i18n("pages.schedule.58dcda214bad")} onClick={() => calShift(-1)}>‹</Btn>
+              <div className="schedule-cal-title"><Text weight="semibold">{i18nRich("pages.schedule.0f02af2d5985", { value: calView.getFullYear(), value2: calView.getMonth() + 1 })}</Text></div>
+              <Btn variant="ghost" size="sm" titleAttr={i18n("pages.schedule.c0eb0fdf8c4e")} onClick={() => calShift(1)}>›</Btn>
+              <Btn variant="ghost" size="sm" titleAttr={i18n("pages.schedule.30fd49298c03")} onClick={() => calShift(12)}>»</Btn>
+            </div>
+            <div className="schedule-cal-grid">
+              {DAY_NAMES.map((n) => (
+                <div key={n}><Text slot="micro" tone="faint">{n[1] ?? n}</Text></div>
+              ))}
+              {(() => {
+                const first = new Date(calView.getFullYear(), calView.getMonth(), 1);
+                const lead = (first.getDay() + 6) % 7;
+                const days = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+                const cells: Array<Date | null> = [];
+                for (let i = 0; i < lead; i++) cells.push(null);
+                for (let d = 1; d <= days; d++) cells.push(new Date(first.getFullYear(), first.getMonth(), d));
+                return cells.map((d, i) =>
+                  d ? (
+                    <Btn key={d.toISOString()} size="sm" variant={ymdOf(d) === todayStr ? "tonal" : "ghost"} onClick={() => pickDay(d)}>
+                      {d.getDate()}
+                    </Btn>
+                  ) : (
+                    <div key={`pad-${i}`} />
+                  ),
+                );
+              })()}
+            </div>
+            <Text slot="micro" tone="faint">
+              {mode === "timetable" ? i18n("pages.schedule.88a5267852f9") : i18n("pages.schedule.c533aa41c064")}
+            </Text>
+          </div>
+        ) : null}
+      </div>
+
+      {/* 视图：时间轴（周网格）/ 列表（月历 + 所选日清单） */}
+      <div className="schedule-panel-block">
+        <Text slot="micro" tone="faint">{i18n("pages.schedule.1c5c06713870")}</Text>
+        <div className="schedule-panel-row">
+          {([["timetable", i18n("pages.schedule.46005f62ee0e")], ["agenda", i18n("pages.schedule.aedd6814ff8c")]] as const).map(([m, lbl]) => (
+            <Chip key={m} size="sm" selected={mode === m} onClick={() => pickMode(m)}>{lbl}</Chip>
+          ))}
+        </div>
+      </div>
+
+      {/* 筛选：显示时段（只影响画布，不改数据；默认全天；「全天」预设即恢复默认） */}
+      <div className="schedule-panel-block">
+        <Text slot="micro" tone="faint">{i18nRich("pages.schedule.2589da741b80", { value: hhmmWin(win.from), value2: hhmmWin(win.to) })}</Text>
+        <div className="schedule-panel-row">
+          <Select size="sm" aria-label={i18n("pages.schedule.0eaedd12dc70")} value={win.from} onChange={(v) => setWin({ ...win, from: Number(v) })}>
+            {WIN_FROM_OPTS.map((m) => (<option key={m} value={m}>{hhmmWin(m)}</option>))}
+          </Select>
+          <Select size="sm" aria-label={i18n("pages.schedule.f50276449943")} value={win.to} onChange={(v) => setWin({ ...win, to: Number(v) })}>
+            {WIN_TO_OPTS.map((m) => (<option key={m} value={m}>{hhmmWin(m)}</option>))}
+          </Select>
+        </div>
+        <div className="schedule-panel-row">
+          {WINDOW_PRESETS.map((p) => (
+            <Chip key={p.label} size="sm" selected={win.from === p.win.from && win.to === p.win.to} onClick={() => setWin(p.win)}>
+              {p.label}
+            </Chip>
+          ))}
+        </div>
+      </div>
+
+      {/* 学期 / 周跳转：当前学期周由两个下拉的选中值直接呈现（原导航块里的检测行与之重复，已并入） */}
+      {semesters.length > 0 ? (
+        <div className="schedule-panel-block">
+          <Text slot="micro" tone="faint">
+            {detected ? i18n("pages.schedule.1536c81c69be") : `${i18n("pages.schedule.1536c81c69be")} · ${i18n("pages.schedule.3c3687e79a53")}`}
+          </Text>
+          <div className="schedule-panel-row">
+            <Select size="sm" aria-label={i18n("pages.schedule.79a4ef019e9c")} value={Math.min(jumpSemIdx, semesters.length - 1)} onChange={(v) => {
+              const i = Number(v);
+              setJumpSemIdx(i);
+              setJumpWeek((w) => Math.min(w, semesters[i]?.weekCount ?? w));
+            }}>
+              {semesters.map((sm, i) => (
+                <option key={sm.semesterId || i} value={i}>{sm.semesterName || sm.semesterId || i18n("pages.schedule.c8d7c83a9995", { value: String(i + 1) })}</option>
+              ))}
+            </Select>
+            <Select size="sm" aria-label={i18n("pages.schedule.fa2110dcaa1b")} value={jumpWeek} onChange={(v) => setJumpWeek(Number(v))}>
+              {Array.from({ length: jumpSem?.weekCount ?? 20 }, (_, i) => i + 1).map((w) => (
+                <option key={w} value={w}>{i18nRich("pages.schedule.ce708f891fc3", { w: w })}</option>
+              ))}
+            </Select>
+            <Btn size="sm" variant="outline" onClick={goSemWeek}>{i18n("pages.schedule.fa96079c3b2f")}</Btn>
+          </div>
+        </div>
+      ) : null}
+
+      {/* 同步在三种模式共用；切换模式不改变保存目标与同步配置。 */}
+      <div className="schedule-panel-block">
+        <Text slot="micro" tone="faint">{canCloud ? `${cal.email} · ${lastSyncText}` : i18n("pages.schedule.4f9f7bd42e5d")}</Text>
+        {cal.error ? <Text slot="micro" tone="error">{cal.error}</Text> : null}
+        {learn.error ? <Text slot="micro" tone="error">{i18nRich("pages.schedule.6d338c4a9155", { error: learn.error })}</Text> : null}
+        {Object.keys(extHw.errors).length ? <Text slot="micro" tone="error">{i18n("pages.schedule.aa5750053364")}</Text> : null}
+        <div className="schedule-panel-row">
+          <Btn size="sm" variant="outline" onClick={() => void onSync()} disabled={!canCloud || cal.syncing} icon={<IconRefresh width={14} height={14} />}>
+            {cal.syncing ? i18n("pages.schedule.4e2238b74ec7") : i18n("pages.schedule.07c9a15ad13f")}
+          </Btn>
+          <Btn size="sm" variant="outline" onClick={() => void onSystemCal()} disabled={busy}>
+            {sysNative === false ? i18n("pages.schedule.exportIcs") : i18n("pages.schedule.ad6d92fd400c")}
+          </Btn>
+          <Btn size="sm" variant="outline" disabled={winLoading} icon={<IconRefresh width={14} height={14} />} onClick={() => {
+            setReloadTick((t) => t + 1);
+            if (!calendar.data) void calendar.reload();
+            invalidateLearnCache();
+            void learn.reload();
+            extHw.reload();
+          }}>{i18n("pages.schedule.aee887434131")}</Btn>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <section className="schedule-workspace">
       {/* 用户口径：日程页不要大标题、也不要顶部按钮条 —— 页头只留页级 chrome 同步（0 高度） */}
@@ -893,33 +1264,83 @@ export function SchedulePage() {
           </div>
         ) : (
           <>
-            {/* 全天日程芯片（不进事件轴；有时才出现，占一行） */}
-            {allDayChips.length > 0 ? (
-              <div className="schedule-chip-row">
-                {allDayChips.slice(0, 8).map((c, i) => (
-                  <Chip
-                    key={i}
-                    size="sm"
-                    tone={c.src === "cloud" ? "success" : "neutral"}
-                    onClick={c.uid ? () => onBlockClick({ courseName: c.label, src: c.src, uid: c.uid }) : undefined}
-                  >{i18nRich("pages.schedule.be7a93a8502e", { label: c.label })}</Chip>
-                ))}
-              </div>
-            ) : null}
-
             <div className="schedule-timeline" ref={scrollRef}>
             <div className="schedule-week">
-            {/* 表头：**一周 7 列**（吸顶）；今天整列高亮 */}
-            <div className="schedule-day-head" ref={headRef}>
-              <div className="schedule-head-gutter" />
-              <div className="schedule-day-strip">
-                {DAY_NAMES.map((name, i) => (
-                  <div key={name} className={"schedule-day-cell" + (inCurrentWeek && i === todayIdx ? " is-today" : "")}>
-                    {name}
-                    <small>{dayDates[i]}</small>
-                  </div>
-                ))}
+            {/* 表头 + 全天横幅行：一起吸顶，7 列与时间轴共用同一列网格；行高一并计入 availH */}
+            <div className="schedule-head" ref={headRef}>
+              <div className="schedule-day-head">
+                <div className="schedule-head-gutter" />
+                <div className="schedule-day-strip">
+                  {DAY_NAMES.map((name, i) => (
+                    <div key={name} className={"schedule-day-cell" + (inCurrentWeek && i === todayIdx ? " is-today" : "")}>
+                      {name}
+                      <small>{dayDates[i]}</small>
+                    </div>
+                  ))}
+                </div>
               </div>
+              {/* 全天横幅：落星期列、跨天连续、每日重复合并；超出道次按列折叠成 +N */}
+              {allday.spans.length > 0 ? (
+                <div className="schedule-allday">
+                  <div className="schedule-allday-gutter">{i18n("pages.schedule.0b97c851e4a7")}</div>
+                  <div
+                    className="schedule-allday-layer"
+                    style={{
+                      "--og-c-schedule-allday-rows": String(allday.visibleRows),
+                      "--og-c-schedule-allday-overflow": allday.hasOverflow ? "1" : "0",
+                    } as CSSProperties}
+                  >
+                    {DAY_NAMES.map((_, day) => (
+                      <div
+                        key={`allday-col-${day}`}
+                        className={"schedule-allday-day" + (inCurrentWeek && day === todayIdx ? " is-today" : "")}
+                        style={{ left: `${(day * 100) / WEEK_COLUMNS}%`, width: `${100 / WEEK_COLUMNS}%` }}
+                      />
+                    ))}
+                    {allday.spans.filter((s) => s.lane < allDayCap).map((s) => {
+                      const left = (s.d0 * 100) / WEEK_COLUMNS;
+                      const width = ((s.d1 - s.d0 + 1) * 100) / WEEK_COLUMNS;
+                      const range = s.d1 > s.d0 ? `${dayDates[s.d0]}–${dayDates[s.d1]}` : dayDates[s.d0];
+                      return (
+                        <span
+                          key={`allday-${s.uid}-${s.d0}`}
+                          className="schedule-allday-slot"
+                          style={{
+                            left: `calc(${left}% + var(--og-c-schedule-allday-inset))`,
+                            width: `calc(${width}% - var(--og-c-schedule-allday-inset) * 2)`,
+                            top: `calc(${s.lane} * var(--og-c-schedule-allday-step) + calc(var(--og-space-1) / 2))`,
+                          }}
+                        >
+                          <Chip
+                            size="sm"
+                            className="schedule-allday-banner"
+                            titleAttr={`${range} · ${s.summary}`}
+                            onClick={() => onBlockClick({ courseName: s.summary, src: s.src, uid: s.uid })}
+                          >{s.summary}</Chip>
+                        </span>
+                      );
+                    })}
+                    {allday.hidden.map((list, day) => list.length === 0 ? null : (
+                      <span
+                        key={`allday-more-${day}`}
+                        className="schedule-allday-more-slot"
+                        style={{
+                          left: `calc(${(day * 100) / WEEK_COLUMNS}% + var(--og-c-schedule-allday-inset))`,
+                          top: `calc(var(--og-c-schedule-allday-rows) * var(--og-c-schedule-allday-step) + calc(var(--og-space-1) / 2))`,
+                        }}
+                      >
+                        <Chip
+                          size="sm"
+                          className="schedule-allday-more"
+                          aria-label={`${DAY_NAMES[day]} ${dayDates[day]} · ${i18n("pages.schedule.0b97c851e4a7")} +${list.length}`}
+                          titleAttr={`${DAY_NAMES[day]} ${dayDates[day]}`}
+                          onClick={(e) => setAllDayMore({ day, el: e.currentTarget })}
+                        >{`+${list.length}`}</Chip>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             <div className="schedule-body">
@@ -935,8 +1356,8 @@ export function SchedulePage() {
 
               {/* 画布 */}
               <div className="schedule-canvas">
-                {/* 空周提示（网格照常渲染，提示浮于其上不挡交互） */}
-                {entries.length === 0 ? (
+                {/* 空周提示（网格照常渲染，提示浮于其上不挡交互）；有全天横幅时不算空 */}
+                {entries.length === 0 && (winLoading || allday.spans.length === 0) ? (
                   <div className="schedule-empty">
                     <Surface overlay radius="sm" pad="sm">
                       <Text tone="faint">{winLoading ? i18n("pages.schedule.48cbf2cb0bd7") : i18n("pages.schedule.310a9aa08211")}</Text>
@@ -1031,11 +1452,28 @@ export function SchedulePage() {
             </div>
             </div>
             </div>
+            {/* +N 弹层：被折叠的全天事件清单，点条目直接开事件编辑器 */}
+            <Menu
+              open={allDayMore !== null}
+              onClose={() => setAllDayMore(null)}
+              anchor={allDayMore?.el}
+              title={allDayMore ? `${DAY_NAMES[allDayMore.day]} ${dayDates[allDayMore.day]} · ${i18n("pages.schedule.0b97c851e4a7")}` : undefined}
+              items={allDayMore ? (allday.hidden[allDayMore.day] ?? []).map((s) => ({
+                id: `allday-${s.uid}-${s.d0}`,
+                label: s.summary,
+                onSelect: () => onBlockClick({ courseName: s.summary, src: s.src, uid: s.uid }),
+              })) : []}
+            />
           </>
         )}
 
-        {/* 唯一常驻控件：一颗悬浮小圆钮，点开 = 全部设置（周切换/视图/筛选/同步/新建/收藏） */}
-        <div className="schedule-dock" ref={dockRef}>
+        {/* 唯一常驻控件：一颗可拖动的悬浮小圆钮（位置记忆），点开 = 全部设置（新建/周切换/视图/筛选/同步/收藏）。
+            拖动协议与硬刷新浮钮一致：过阈值才位移；拖动收起面板；松手吞掉 click 并记位。 */}
+        <div
+          className={"schedule-dock" + (dockDragging ? " is-dragging" : "")}
+          ref={dockRef}
+          style={(dockPos ? { right: `${dockPos.right}px`, bottom: `${dockPos.bottom}px` } : undefined) as CSSProperties | undefined}
+        >
           <Btn
             variant="solid"
             tone="brand"
@@ -1043,164 +1481,39 @@ export function SchedulePage() {
             aria-label={i18n("pages.schedule.dd5376aed47e")}
             aria-expanded={panelOpen}
             titleAttr={i18n("pages.schedule.4de047cb8209")}
-            onClick={() => setPanelOpen((v) => !v)}
+            onClick={(e) => {
+              // 拖完的那次 click 吞掉；键盘 Enter 的 click（detail=0）不受影响
+              if (dockSkipClick.current && e.detail !== 0) { dockSkipClick.current = false; return; }
+              dockSkipClick.current = false;
+              setPanelOpen((v) => !v);
+            }}
+            onPointerDown={onDockPointerDown}
+            onPointerMove={onDockPointerMove}
+            onPointerUp={onDockPointerUp}
+            onPointerCancel={onDockPointerUp}
             icon={<IconSchedule width={16} height={16} />}
           />
-          <Popover
-            open={panelOpen}
-            onClose={() => setPanelOpen(false)}
-            anchor={dockRef.current}
-            side={tier === "expanded" ? "top" : "bottom"}
-            align="center"
-            label={i18n("pages.schedule.dd5376aed47e")}
-          >
-            <div className="schedule-panel">
-              {/* 周导航：时间轴恒以周为单位 */}
-              <div className="schedule-panel-block">
-                <Text slot="micro" tone="faint">{i18n("pages.schedule.f041b6d0cdd4")}</Text>
-                <div className="schedule-panel-row">
-                  <Btn variant="outline" size="sm" titleAttr={mode === "timetable" ? i18n("pages.schedule.c0b859346782") : i18n("pages.schedule.f9e727223456")} aria-label={mode === "timetable" ? i18n("pages.schedule.c0b859346782") : i18n("pages.schedule.f9e727223456")} onClick={() => moveAnchor(-1)}>‹</Btn>
-                  <Btn
-                    className="schedule-panel-grow schedule-panel-label"
-                    variant="outline"
-                    size="sm"
-                    aria-expanded={calOpen}
-                    titleAttr={i18n("pages.schedule.a80ca7344396")}
-                    onClick={() => setCalOpen((v) => !v)}
-                  >{label}</Btn>
-                  <Btn variant="outline" size="sm" titleAttr={mode === "timetable" ? i18n("pages.schedule.31da7d33b80d") : i18n("pages.schedule.3e0b634699d4")} aria-label={mode === "timetable" ? i18n("pages.schedule.31da7d33b80d") : i18n("pages.schedule.3e0b634699d4")} onClick={() => moveAnchor(1)}>›</Btn>
-                  <Btn variant="outline" size="sm" onClick={() => { setAnchor(new Date()); setSelected(todayStr); }}>{i18n("pages.schedule.b4c6c3eb0bce")}</Btn>
-                </div>
-                <div className="schedule-panel-row">
-                  <Text slot="label" tone="faint">
-                    {detected ? i18n("pages.schedule.dba0129db99f", { value: String(detected.sem.semesterName || detected.sem.semesterId), weekNo: String(detected.weekNo) }) : i18n("pages.schedule.3c3687e79a53")}
-                  </Text>
-                </div>
-                {calOpen ? (
-                  <div className="schedule-cal">
-                    <div className="schedule-cal-head">
-                      <Btn variant="ghost" size="sm" titleAttr={i18n("pages.schedule.43cecd06c54d")} onClick={() => calShift(-12)}>«</Btn>
-                      <Btn variant="ghost" size="sm" titleAttr={i18n("pages.schedule.58dcda214bad")} onClick={() => calShift(-1)}>‹</Btn>
-                      <div className="schedule-cal-title"><Text weight="semibold">{i18nRich("pages.schedule.0f02af2d5985", { value: calView.getFullYear(), value2: calView.getMonth() + 1 })}</Text></div>
-                      <Btn variant="ghost" size="sm" titleAttr={i18n("pages.schedule.c0eb0fdf8c4e")} onClick={() => calShift(1)}>›</Btn>
-                      <Btn variant="ghost" size="sm" titleAttr={i18n("pages.schedule.30fd49298c03")} onClick={() => calShift(12)}>»</Btn>
-                    </div>
-                    <div className="schedule-cal-grid">
-                      {DAY_NAMES.map((n) => (
-                        <div key={n}><Text slot="micro" tone="faint">{n[1] ?? n}</Text></div>
-                      ))}
-                      {(() => {
-                        const first = new Date(calView.getFullYear(), calView.getMonth(), 1);
-                        const lead = (first.getDay() + 6) % 7;
-                        const days = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
-                        const cells: Array<Date | null> = [];
-                        for (let i = 0; i < lead; i++) cells.push(null);
-                        for (let d = 1; d <= days; d++) cells.push(new Date(first.getFullYear(), first.getMonth(), d));
-                        return cells.map((d, i) =>
-                          d ? (
-                            <Btn key={d.toISOString()} size="sm" variant={ymdOf(d) === todayStr ? "tonal" : "ghost"} onClick={() => pickDay(d)}>
-                              {d.getDate()}
-                            </Btn>
-                          ) : (
-                            <div key={`pad-${i}`} />
-                          ),
-                        );
-                      })()}
-                    </div>
-                    <Text slot="micro" tone="faint">
-                      {mode === "timetable" ? i18n("pages.schedule.88a5267852f9") : i18n("pages.schedule.c533aa41c064")}
-                    </Text>
-                  </div>
-                ) : null}
-              </div>
-
-              {/* 视图：时间轴（周网格）/ 列表（月历 + 所选日清单） */}
-              <div className="schedule-panel-block">
-                <Text slot="micro" tone="faint">{i18n("pages.schedule.1c5c06713870")}</Text>
-                <div className="schedule-panel-row">
-                  {([["timetable", i18n("pages.schedule.46005f62ee0e")], ["agenda", i18n("pages.schedule.aedd6814ff8c")]] as const).map(([m, lbl]) => (
-                    <Chip key={m} size="sm" selected={mode === m} onClick={() => pickMode(m)}>{lbl}</Chip>
-                  ))}
-                </div>
-              </div>
-
-              {/* 筛选：显示时段（只影响画布，不改数据；默认全天） */}
-              <div className="schedule-panel-block">
-                <Text slot="micro" tone="faint">{i18nRich("pages.schedule.2589da741b80", { value: hhmmWin(win.from), value2: hhmmWin(win.to) })}</Text>
-                <div className="schedule-panel-row">
-                  <Select size="sm" aria-label={i18n("pages.schedule.0eaedd12dc70")} value={win.from} onChange={(v) => setWin({ ...win, from: Number(v) })}>
-                    {WIN_FROM_OPTS.map((m) => (<option key={m} value={m}>{hhmmWin(m)}</option>))}
-                  </Select>
-                  <Select size="sm" aria-label={i18n("pages.schedule.f50276449943")} value={win.to} onChange={(v) => setWin({ ...win, to: Number(v) })}>
-                    {WIN_TO_OPTS.map((m) => (<option key={m} value={m}>{hhmmWin(m)}</option>))}
-                  </Select>
-                </div>
-                <div className="schedule-panel-row">
-                  {WINDOW_PRESETS.map((p) => (
-                    <Chip key={p.label} size="sm" selected={win.from === p.win.from && win.to === p.win.to} onClick={() => setWin(p.win)}>
-                      {p.label}
-                    </Chip>
-                  ))}
-                  <Btn size="sm" variant="outline" onClick={() => setWin(FULL_DAY)}>{i18n("pages.schedule.702b1048fceb")}</Btn>
-                </div>
-              </div>
-
-              {/* 学期 / 周跳转 */}
-              {semesters.length > 0 ? (
-                <div className="schedule-panel-block">
-                  <Text slot="micro" tone="faint">{i18n("pages.schedule.1536c81c69be")}</Text>
-                  <div className="schedule-panel-row">
-                    <Select size="sm" aria-label={i18n("pages.schedule.79a4ef019e9c")} value={Math.min(jumpSemIdx, semesters.length - 1)} onChange={(v) => {
-                      const i = Number(v);
-                      setJumpSemIdx(i);
-                      setJumpWeek((w) => Math.min(w, semesters[i]?.weekCount ?? w));
-                    }}>
-                      {semesters.map((sm, i) => (
-                        <option key={sm.semesterId || i} value={i}>{sm.semesterName || sm.semesterId || i18n("pages.schedule.c8d7c83a9995", { value: String(i + 1) })}</option>
-                      ))}
-                    </Select>
-                    <Select size="sm" aria-label={i18n("pages.schedule.fa2110dcaa1b")} value={jumpWeek} onChange={(v) => setJumpWeek(Number(v))}>
-                      {Array.from({ length: jumpSem?.weekCount ?? 20 }, (_, i) => i + 1).map((w) => (
-                        <option key={w} value={w}>{i18nRich("pages.schedule.ce708f891fc3", { w: w })}</option>
-                      ))}
-                    </Select>
-                    <Btn size="sm" variant="outline" onClick={goSemWeek}>{i18n("pages.schedule.fa96079c3b2f")}</Btn>
-                  </div>
-                </div>
-              ) : null}
-
-              {/* 同步在三种模式共用；切换模式不改变保存目标与同步配置。 */}
-              <div className="schedule-panel-block">
-                <Text slot="micro" tone="faint">{canCloud ? `${cal.email} · ${lastSyncText}` : i18n("pages.schedule.4f9f7bd42e5d")}</Text>
-                {cal.error ? <Text slot="micro" tone="error">{cal.error}</Text> : null}
-                {learn.error ? <Text slot="micro" tone="error">{i18nRich("pages.schedule.6d338c4a9155", { error: learn.error })}</Text> : null}
-                {Object.keys(extHw.errors).length ? <Text slot="micro" tone="error">{i18n("pages.schedule.aa5750053364")}</Text> : null}
-                <div className="schedule-panel-row">
-                  <Btn size="sm" variant="outline" onClick={() => void onSync()} disabled={!canCloud || cal.syncing} icon={<IconRefresh width={14} height={14} />}>
-                    {cal.syncing ? i18n("pages.schedule.4e2238b74ec7") : i18n("pages.schedule.07c9a15ad13f")}
-                  </Btn>
-                  <Btn size="sm" variant="outline" onClick={() => void onSystemCal()} disabled={busy}>
-                    {sysNative === false ? i18n("pages.schedule.exportIcs") : i18n("pages.schedule.ad6d92fd400c")}
-                  </Btn>
-                  <Btn size="sm" variant="outline" disabled={winLoading} icon={<IconRefresh width={14} height={14} />} onClick={() => {
-                    setReloadTick((t) => t + 1);
-                    if (!calendar.data) void calendar.reload();
-                    invalidateLearnCache();
-                    void learn.reload();
-                    extHw.reload();
-                  }}>{i18n("pages.schedule.aee887434131")}</Btn>
-                </div>
-              </div>
-
-              {/* 新建 + 收藏本页 */}
-              <div className="schedule-panel-row">
-                <Btn variant="solid" tone="brand" size="sm" onClick={() => { setMsg(null); setDraft(emptyDraft(defaultDraftDate, canCloud)); setPanelOpen(false); }}>{i18n("pages.schedule.5e6a5170f6ac")}</Btn>
-                <Spacer />
-                <PageAtomStar atomKey="schedule" title={i18n("pages.schedule.a14f23af7016")} />
-              </div>
-            </div>
-          </Popover>
+          {/* 桌面（含中等宽度）：锚定 Popover；唯一滚动容器是浮层外壳（og-schedule-pop 是测试/样式锚点），见 schedule.css §5 */}
+          {phoneUi ? null : (
+            <Popover
+              open={panelOpen}
+              onClose={() => setPanelOpen(false)}
+              anchor={dockRef.current}
+              side={tier === "expanded" ? "top" : "bottom"}
+              align="center"
+              label={i18n("pages.schedule.dd5376aed47e")}
+              className="og-schedule-pop"
+            >
+              {panelBody}
+            </Popover>
+          )}
         </div>
+        {/* 手机形态：设置面板走底部 Sheet（抓手 + 遮罩；唯一滚动容器是 .og-panel-body） */}
+        {phoneUi ? (
+          <Sheet open={panelOpen} onClose={() => setPanelOpen(false)} title={i18n("pages.schedule.dd5376aed47e")}>
+            {panelBody}
+          </Sheet>
+        ) : null}
       </div>
 
       {/* 只读详情弹窗（课程/考试/作业：来自教务与作业系统，只能看不能改）。
@@ -1336,7 +1649,7 @@ export function SchedulePage() {
           >
             <Stack gap={2}>
               {msg ? <Banner tone="info">{msg}</Banner> : null}
-              {sd.source?.rrule ? <Text slot="label" tone="quiet">{i18n("pages.schedule.3df7a207af75")}</Text> : null}
+              {sd.source?.rrule || sd.repeat.mode !== "none" ? <Text slot="label" tone="quiet">{i18n("pages.schedule.3df7a207af75")}</Text> : null}
               <Field label={i18n("pages.schedule.c3405f8c7d9d")}>
                 <Input value={sd.title} placeholder={i18n("pages.schedule.bd2f0b059d14")} onChange={(value) => setDraft({ ...sd, title: value })} />
               </Field>
@@ -1348,7 +1661,8 @@ export function SchedulePage() {
                 </Grow>
                 <Grow>
                   <Field label={sd.allDay ? i18n("pages.schedule.ce40d3d5810a") : i18n("pages.schedule.895cd52fbbb6")}>
-                    <Input type="date" value={sd.endDate} min={sd.date} onChange={(value) => setDraft({ ...sd, endDate: value })} aria-label={i18n("pages.schedule.895cd52fbbb6")} />
+                    {/* 重复与跨天互斥：激活重复后结束日锁定为首场当天 */}
+                    <Input type="date" value={sd.endDate} min={sd.date} disabled={sd.repeat.mode !== "none"} onChange={(value) => setDraft({ ...sd, endDate: value })} aria-label={i18n("pages.schedule.895cd52fbbb6")} />
                   </Field>
                 </Grow>
                 <Checkbox checked={sd.allDay} onChange={(v2) => setDraft({ ...sd, allDay: v2 })} label={i18n("pages.schedule.0b97c851e4a7")} />
@@ -1366,6 +1680,83 @@ export function SchedulePage() {
                     </Field>
                   </Grow>
                 </Inline>
+              ) : null}
+              {/* 重复规则（grill 2026-10-26：不重复/每天/每周/每两周/每月；永不或截止日期收尾）。
+               *  锁定系列（导入的多天+重复）不渲染控件，仅保留上方整系列标签。 */}
+              {!sd.repeatLocked ? (
+                <Inline gap={2} wrap vAlign="end">
+                  <Grow>
+                    <Field label={i18n("pages.schedule.609cf2fdf6ff")}>
+                      <Select
+                        value={sd.repeat.mode}
+                        aria-label={i18n("pages.schedule.609cf2fdf6ff")}
+                        options={[
+                          { value: "none", label: i18n("pages.schedule.ebdc3594be5c") },
+                          { value: "daily", label: i18n("pages.schedule.eea1694c235b") },
+                          { value: "weekly", label: i18n("pages.schedule.92845d3b531d") },
+                          { value: "biweekly", label: i18n("pages.schedule.85abb11694fe") },
+                          { value: "monthly", label: i18n("pages.schedule.68b21af949de") },
+                        ]}
+                        onChange={(value) => setDraft({
+                          ...sd,
+                          repeat: {
+                            ...sd.repeat,
+                            mode: value as RepeatMode,
+                            // 首次切入每周系：默认勾首场日期的星期（显式选择语义，之后不随日期联动）
+                            byDay: (value === "weekly" || value === "biweekly") && sd.repeat.byDay.length === 0 ? [dayOfWeekOf(sd.date)] : sd.repeat.byDay,
+                          },
+                          endDate: value === "none" ? sd.endDate : sd.date,
+                          repeatTouched: true,
+                        })}
+                      />
+                    </Field>
+                  </Grow>
+                  {sd.repeat.mode !== "none" ? (
+                    <Grow>
+                      <Field label={i18n("pages.schedule.35329267c76a")}>
+                        <Select
+                          value={sd.repeat.until ? "until" : "never"}
+                          aria-label={i18n("pages.schedule.35329267c76a")}
+                          options={[
+                            { value: "never", label: i18n("pages.schedule.bf2431e3619d") },
+                            { value: "until", label: i18n("pages.schedule.31802424217f") },
+                          ]}
+                          onChange={(value) => setDraft({ ...sd, repeat: { ...sd.repeat, until: value === "until" ? (sd.repeat.until || sd.date) : "" }, repeatTouched: true })}
+                        />
+                      </Field>
+                    </Grow>
+                  ) : null}
+                  {sd.repeat.mode !== "none" && sd.repeat.until ? (
+                    <Grow>
+                      <Field label={i18n("pages.schedule.31802424217f")}>
+                        <Input type="date" value={sd.repeat.until} min={sd.date} onChange={(value) => setDraft({ ...sd, repeat: { ...sd.repeat, until: value }, repeatTouched: true })} aria-label={i18n("pages.schedule.31802424217f")} />
+                      </Field>
+                    </Grow>
+                  ) : null}
+                </Inline>
+              ) : null}
+              {(sd.repeat.mode === "weekly" || sd.repeat.mode === "biweekly") && !sd.repeatLocked ? (
+                <Inline gap={1} wrap>
+                  {DAY_NAMES.map((name, i) => (
+                    <Chip
+                      key={i}
+                      selected={sd.repeat.byDay.includes(i + 1)}
+                      onClick={() => setDraft({
+                        ...sd,
+                        repeat: {
+                          ...sd.repeat,
+                          byDay: sd.repeat.byDay.includes(i + 1)
+                            ? sd.repeat.byDay.filter((d) => d !== i + 1)
+                            : [...sd.repeat.byDay, i + 1].sort((a, b) => a - b),
+                        },
+                        repeatTouched: true,
+                      })}
+                    >{name}</Chip>
+                  ))}
+                </Inline>
+              ) : null}
+              {sd.repeatTouched && sd.source?.rrule ? (
+                <Text slot="label" tone="faint">{i18n("pages.schedule.94b9ed1021c2")}</Text>
               ) : null}
               <Field label={i18n("pages.schedule.253ac66fb8e1")}>
                 <Input value={sd.location} placeholder={i18n("pages.schedule.537352400c49")} onChange={(value) => setDraft({ ...sd, location: value })} />
