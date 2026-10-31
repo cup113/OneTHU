@@ -713,11 +713,11 @@ export class LearnClient {
     } catch (e) {
       // A first probe can explicitly report an expired session before any CSRF
       // exists. Let the same bounded establishment path handle it as login HTML.
-      // 403 同义：这一轮拿不到凭据，交给 #establishSession 的重建链。
-      const status = httpStatusOf(e);
-      if (status !== null && LEARN_SESSION_HTTP.has(status)) {
-        this.lastDebug = `COURSE-PAGE status=${status}`;
-        this.lastCsrfDebug = `miss status=${status}`;
+      // 403 不在此列：取凭据页这一步没有可重放的读请求，宿主把它当作「探活失败」，
+      // 由启动链的静默重登兜底（`probeLearnSession` 与启动守卫都依赖这个拒绝语义）。
+      if (e instanceof Error && e.message === "HTTP 401") {
+        this.lastDebug = "COURSE-PAGE status=401";
+        this.lastCsrfDebug = "miss status=401";
         return null;
       }
       if (!(e instanceof LearnResponseError)) {
@@ -831,10 +831,12 @@ export class LearnClient {
       const status = httpStatusOf(e);
       if (status !== null && LEARN_SESSION_HTTP.has(status)) {
         this.lastResponseDebug = `LEARN-READ status=${status}`;
-        // 这份凭据已经不被承认了：不留给下一次重试，下一次入口的
-        // #ensureCsrfReady 必须重新取证（否则「重试」永远是同一个 403）。
-        this.#csrf = null;
-        this.#http.debug?.(`LEARN-SESSION HTTP ${status} → 静默重建会话后重试`);
+        // 只抛标记，**不在这里清 #csrf**：并发的旧请求可能在别的请求已经重建成功后
+        // 才带着 403 回来，它手里的旧凭据不是当前那份——清掉等于把刚装好的新凭据
+        // 也一起废了（#withRelogin 的 `generation !== #sessionGeneration` 快路径
+        // 正是用 `Boolean(#csrf)` 判断「这一代已经重建过」，被清就变成假会话失效）。
+        // 作废旧凭据由 #recoverSession 在单飞锁内完成，那里才是「当前这一代」的边界。
+        this.#http.debug?.(`LEARN-SESSION HTTP ${status} → 交给单飞重建`);
         throw new SessionExpiredError();
       }
       throw e;

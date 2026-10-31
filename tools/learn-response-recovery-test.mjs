@@ -152,12 +152,21 @@ for (const method of ['resume','getAllHomework']) {
     }
   });
 }
-await test('HTTP 401 recovers locally while 403 preserves permission failure',async()=>{
+await test('a read answers 401 or 403 with one learning recovery; other statuses stay service failures',async()=>{
+  // 403 与 401 同处理：2026-10-30 实录里学习域会话过期后同一读接口连续回 403，重建后
+  // 立即 200；而真实「无权限」的形态是 200 + 可见文案的壳页（classifyLearnPage 的
+  // learn-denied），不是 403。取凭据页（启动探活）不在此列，见 learn-recovery-probe-test。
   for(const status of [401,403]) {
-    let hooks=0;const f=fixture(()=>new Response('Access denied',{status}));
+    let hooks=0;const f=fixture(()=>new Response('Denied',{status}));
     f.client.reloginHook=async()=>{hooks++;return false;};
-    await assert.rejects(f.client.getCourseList('example'));
-    assert.equal(hooks,status===401?1:0);
+    await assert.rejects(f.client.getCourseList('example'),AuthRequiredError);
+    assert.equal(hooks,1,`${status} 走一次学习域重建，重建失败才把会话错误交上去`);
+  }
+  for(const status of [429,503]) {
+    let hooks=0;const f=fixture(()=>new Response('Busy',{status}));
+    f.client.reloginHook=async()=>{hooks++;return false;};
+    await assert.rejects(f.client.getCourseList('example'),e=>!(e instanceof AuthRequiredError));
+    assert.equal(hooks,0,`${status} 是服务错误，不重登`);
   }
 });
 await test('learning recovery never starts a simultaneous global watchdog login',async()=>{
