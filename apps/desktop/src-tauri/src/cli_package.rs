@@ -26,6 +26,34 @@ fn platform() -> (&'static str, &'static str) {
         },
     )
 }
+/// 分叉构建（`ONETHU_FORK=1`，只由 `apps/desktop/scripts/build-fork.mjs` 设置）从自己的发布
+/// 仓库取 CLI 包，tag 用 `fork-<version>`：分叉版本号（如 `0.11.4-4`）在上游没有对应 release，
+/// 沿上游源查一定 404。校园云盘镜像里只有上游的包，版本与信任链都对不上，因此分叉也不退回镜像。
+const FORK_BUILD: bool = option_env!("ONETHU_FORK").is_some();
+const FORK_REPO: &str = "cup113/OneTHU";
+const OFFICIAL_REPO: &str = "smartThise/OneTHU";
+fn release_repo() -> &'static str {
+    if FORK_BUILD {
+        FORK_REPO
+    } else {
+        OFFICIAL_REPO
+    }
+}
+fn release_tag(version: &str) -> String {
+    if FORK_BUILD {
+        format!("fork-{version}")
+    } else {
+        format!("v{version}")
+    }
+}
+fn release_asset_url(version: &str, filename: &str) -> String {
+    format!(
+        "https://github.com/{}/releases/download/{}/{filename}",
+        release_repo(),
+        release_tag(version)
+    )
+}
+
 fn status(app: &tauri::AppHandle) -> Result<Value, String> {
     let installed = daemon::manifest(&daemon::install_dir(app)?).ok();
     let version = app.package_info().version.to_string();
@@ -214,13 +242,17 @@ pub async fn cli_package_install(
     let github = async {
         let metadata = fetch(
             &client,
-            &format!("https://api.github.com/repos/smartThise/OneTHU/releases/tags/v{version}"),
+            &format!(
+                "https://api.github.com/repos/{}/releases/tags/{}",
+                release_repo(),
+                release_tag(&version)
+            ),
             2 * 1024 * 1024,
         )
         .await?;
         let release: Value =
             serde_json::from_slice(&metadata).map_err(|_| "CLI_PACKAGE_SOURCE_INVALID")?;
-        if release["draft"] != false || release["tag_name"] != format!("v{version}") {
+        if release["draft"] != false || release["tag_name"] != release_tag(&version) {
             return Err("CLI_PACKAGE_SOURCE_INVALID".to_string());
         }
         let asset = release["assets"]
@@ -235,11 +267,7 @@ pub async fn cli_package_install(
         let url = asset["browser_download_url"]
             .as_str()
             .ok_or("CLI_PACKAGE_SOURCE_INVALID")?;
-        if url
-            != format!(
-                "https://github.com/smartThise/OneTHU/releases/download/v{version}/{filename}"
-            )
-        {
+        if url != release_asset_url(&version, &filename) {
             return Err("CLI_PACKAGE_SOURCE_INVALID".into());
         }
         let bytes = fetch(&client, url, 128 * 1024 * 1024).await?;
@@ -251,6 +279,8 @@ pub async fn cli_package_install(
     .await;
     let bytes = match github {
         Ok(bytes) => bytes,
+        // 分叉：镜像里只有上游的包（版本、tag 都对不上），如实报上游那条失败原因。
+        Err(error) if FORK_BUILD => return Err(error),
         Err(_) => {
             // Independently verifiable campus mirror; fixed public release
             // library, metadata version and path, never a caller-supplied URL.
@@ -403,5 +433,28 @@ mod tests {
                 .parse()
                 .unwrap()
         ));
+    }
+    /// 包的来源必须与构建身份同源：分叉包在上游没有 `v<version>` 这个 release，
+    /// 混用仓库名与 tag 会让「安装 CLI」永远 404 或永远版本不符。
+    #[test]
+    fn release_sources_follow_the_build_identity() {
+        let asset = "OneTHU-CLI_0.11.4-4_win32_x64.zip";
+        if FORK_BUILD {
+            assert_eq!(release_repo(), FORK_REPO);
+            assert_eq!(release_tag("0.11.4-4"), "fork-0.11.4-4");
+            assert_eq!(
+                release_asset_url("0.11.4-4", asset),
+                format!(
+                    "https://github.com/cup113/OneTHU/releases/download/fork-0.11.4-4/{asset}"
+                )
+            );
+        } else {
+            assert_eq!(release_repo(), OFFICIAL_REPO);
+            assert_eq!(release_tag("0.11.4-fix-3"), "v0.11.4-fix-3");
+            assert_eq!(
+                release_asset_url("0.11.4-fix-3", "OneTHU-CLI_0.11.4-fix-3_win32_x64.zip"),
+                "https://github.com/smartThise/OneTHU/releases/download/v0.11.4-fix-3/OneTHU-CLI_0.11.4-fix-3_win32_x64.zip"
+            );
+        }
     }
 }
