@@ -22,23 +22,25 @@ async function start(t){
   const held=new Promise(resolve=>child.on('message',message=>{if(message==='probe-held')resolve();}));
   t.after(async()=>{if(child.exitCode===null){child.send('release');child.kill('SIGTERM');}await closed;await rm(dir,{recursive:true,force:true});});
   const lines=createInterface({input:child.stdout});
-  await Promise.race([once(lines,'line'),closed.then(()=>{throw Error(stderr||'daemon exited');}),deadline(10000)]);lines.close();
-  await Promise.race([held,deadline(3000)]);
-  const client=new DaemonClient(JSON.parse(await readFile(path.join(dir,'daemon-access.json'),'utf8')),2000);
+  await Promise.race([once(lines,'line'),closed.then(()=>{throw Error(stderr||'daemon exited');}),deadline(30000)]);lines.close();
+  await Promise.race([held,deadline(15000)]);
+  // Windows CI 上 daemon 首次初始化存储要经 PowerShell 写 DACL（实测单次可达 2s+），
+  // 2s 的客户端超时会让 desktop.logout/exportSession 直接报 DAEMON_REQUEST_TIMEOUT。
+  const client=new DaemonClient(JSON.parse(await readFile(path.join(dir,'daemon-access.json'),'utf8')),15000);
   return {child,client,dir};
 }
-test('desktop exports its durable snapshot while the daemon startup network probe is hanging',{timeout:15000},async t=>{
+test('desktop exports its durable snapshot while the daemon startup network probe is hanging',{timeout:60000},async t=>{
   const f=await start(t),s=await f.client.call('desktop.exportSession');
   assert.equal(s.restoring,true);assert.equal(s.snapshot.username,snapshot.username);assert.equal(s.session.authenticated,false);
 });
-test('explicit desktop logout interrupts startup and a late response cannot restore the account',{timeout:15000},async t=>{
+test('explicit desktop logout interrupts startup and a late response cannot restore the account',{timeout:60000},async t=>{
   const f=await start(t),s=await f.client.call('desktop.status');
   await f.client.call('desktop.logout',{expectedAccount:s.username,expectedEpoch:s.epoch});
   f.child.send('release');await delay(50);
   const after=await f.client.call('desktop.exportSession');assert.equal(after.snapshot,null);assert.equal(after.username,null);assert.equal(after.tombstone,true);
   assert.equal(JSON.parse(await readFile(path.join(f.dir,'session.json'),'utf8')).session,null);
 });
-test('a verified explicit handoff supersedes the hanging startup probe without waiting for it',{timeout:15000},async t=>{
+test('a verified explicit handoff supersedes the hanging startup probe without waiting for it',{timeout:60000},async t=>{
   const f=await start(t),s=await f.client.call('desktop.status');
   const next={...snapshot,fingerprint:'d'.repeat(32)};
   const adopted=await f.client.call('desktop.adoptSession',{snapshot:next,expectedEpoch:s.epoch,reason:'login'});
