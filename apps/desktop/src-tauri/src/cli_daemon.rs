@@ -760,7 +760,17 @@ fn windows_private_acl(file: &File) -> Result<(), String> {
             .ok()
             .map_err(|_| "CLI_DAEMON_PRIVATE_FILE_REQUIRED")?;
             let check = (|| {
-                EqualSid(owner, sid).map_err(|_| "CLI_DAEMON_PRIVATE_FILE_REQUIRED")?;
+                // Windows gives a file created by an elevated process the
+                // Administrators group as its default owner, so "owner is the
+                // current user" cannot be the invariant: an elevated daemon and
+                // every later unelevated GUI then disagree about a record that
+                // is in fact private. Who may open the file is decided by the
+                // DACL below; ownership only has to be the user or that group.
+                if EqualSid(owner, sid).is_err()
+                    && !IsWellKnownSid(owner, WinBuiltinAdministratorsSid).as_bool()
+                {
+                    return Err("CLI_DAEMON_PRIVATE_FILE_REQUIRED".into());
+                }
                 if dacl.is_null() {
                     return Err("CLI_DAEMON_PRIVATE_FILE_REQUIRED".into());
                 }

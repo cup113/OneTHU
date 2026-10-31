@@ -1,6 +1,6 @@
 //! 生成移动端胶水与 allow-* 权限文件（tauri-plugin 标准构建）
 fn main() {
-    let commands = &["supported", "request_permission", "sync", "remove_calendar"];
+    let commands = &["supported", "request_permission", "sync", "remove_calendar", "sync_trace"];
     let result = tauri_plugin::Builder::new(commands)
         .android_path("android")
         .try_build();
