@@ -910,7 +910,13 @@ export function SchedulePage() {
       if (await systemCalSupported()) {
         try {
           const r = await syncSystemCalendar();
-          setMsg(i18n("pages.schedule.09405e6ef9e6", { added: String(r.added), removed: String(r.removed) }));
+          // 差异同步：内容没变时 added/removed 都是 0（此时一次 provider 都没写），
+          // 说「已写入 0 条（清理旧 0 条）」会让人以为没同步，改用「已是最新」。
+          setMsg(
+            r.added === 0 && r.removed === 0
+              ? i18n("components.calendarsyncsettings.40012cfe27b0")
+              : i18n("pages.schedule.09405e6ef9e6", { added: String(r.added), removed: String(r.removed) }),
+          );
         } catch (err) {
           setMsg(i18n("pages.schedule.77609a0fe15d", { value: String(err instanceof Error ? err.message : String(err)) }));
         }
