@@ -20,6 +20,32 @@
 | Android 图标 | 品牌标（黑底白字 One/THU） | 反色（白底黑字） |
 | Android 签名 | 发布 keystore | 独立 dev keystore，首次构建自动生成 |
 
+第三套产物是**分叉包**（`ONETHU_FORK=1`，见 `scripts/build-fork.mjs`），与上面两者都不同：
+
+| 项 | 正式版 | 分叉包 |
+|---|---|---|
+| 前端开关 | 不设 `ONETHU_FORK` | `ONETHU_FORK=1` |
+| 打包标识 | `app.onethu.desktop` | `app.onethu.desktop.fork`（`src-tauri/tauri.fork.conf.json`） |
+| 应用名 / 安装目录 | OneTHU | OneTHU-Fork |
+| 版本号 | `apps/desktop/package.json` | 同文件的 `version`（如 `0.11.2-1`），经 `ONETHU_VERSION` 注入前端 |
+| 打包目标 | `bundle.targets: all` | 只打发布用的那个：Windows `nsis`、macOS `dmg` |
+| 更新源 | 上游 GitHub Releases + 清华云盘镜像 | 只查 `cup113/OneTHU` 的 Releases，不启用上游云盘镜像 |
+
+分叉包与正式版可以同时安装：标识不同 → 数据目录与单实例锁分开；应用名不同 → 安装目录分开。
+构建命令为 `build:fork`（只出前端）与 `tauri:build:fork`（连打包，可再跟 `--target` / `--no-bundle`）。
+
+分叉版本号的预发布段**只能是纯数字**（`0.11.2-1`、`0.11.2-2` …）。Windows MSI 打包器对带字母的
+预发布段直接报错，实测原文：
+
+```text
+failed to bundle project: `optional pre-release identifier in app version must be numeric-only
+and cannot be greater than 65535 for msi target`
+```
+
+所以 `0.11.2-fork.1` 这种写法在 `tauri build` 阶段就会失败；脚本与护栏都会先拦住它，
+分叉构建也不再构建 MSI（发布只需要 nsis 的 exe）。
+
+
 ## 2. 构建
 
 桌面端：
@@ -105,3 +131,144 @@ grep -rl "onethu.dev.badge.hidden" apps/desktop/dist/assets || echo "正式版�
   两种构建共有，正式版设置页的入口隐藏但命令仍在。
 - dev keystore 不入库。更换机器或删除该文件后，已安装的 dev 包需先卸载再安装新包。
 - 正式版与开发者版共用 `apps/desktop/dist`，两种构建交替执行时以最后一次为准。
+- 三套产物（正式 / dev / 分叉）共用同一个 `dist`，交替构建时同样以最后一次为准；构建脚本
+  末尾会在产物层面复核对应开关是否生效，未生效直接失败，不会静默产出错误的一套。
+
+## 7. 分叉包的发布
+
+- **不打 tag**：本仓是 `smartThise/OneTHU` 的临时 fork，`.github/workflows/release.yml` 只保留
+  `workflow_dispatch`。分叉里打 `v*` 会与上游将来的同名 tag 撞车，也会在 Actions 里产出一套
+  看着像正式发布的东西。出包一律手动 dispatch，并勾上 `fork`。
+- 拉上游用 `git fetch upstream --no-tags`；`git push --tags` / `--follow-tags` 会把上游同名 tag
+  推进 fork，是唯一会主动制造冲突的操作。
+- 分叉包的更新源是自己仓库的 Releases（`latest.json`），要在自己仓库里维护这份清单，否则
+  「检查更新」只会报「没查到」。上游的清华云盘镜像在分叉包里被刻意关闭。清单是**发布资产**，
+  名字必须叫 `latest.json`，形状见 `apps/desktop/src/lib/updater.ts` 文件头：版本、`minVersion`、
+  `url`（可写相对名，按 `releases/latest/download/` 解析）、`size`、`sha256`、说明与
+  `assets.android`；`sha256` 由 Rust 侧流式校验，不符直接丢弃文件。
+- 分叉版本形如 `0.11.3-N`，`N` 是分叉自己的发版序号，每次发版加一。版本比较
+  （`lib/update.ts` 的 `isNewer`）把数字预发布段算作第四段，否则 `0.11.3-2` 会被判成与
+  `0.11.3-1` 相等、更新检查静默失效（护栏：`tools/update-version-order-test.mjs`）。
+  正式版 `x.y.z` 的三段语义不变。
+- 分叉包**不能**沿用正式版签名与包名发布 Android 包：同包名换签名会安装失败，升级链也会断。
+- Android 分叉包在 CI 上构建：`.github/workflows/release.yml` 勾 `android` 输入，走
+  `apps/desktop/scripts/build-fork-apk.sh`。runner 上从零生成 Android 工程
+  （`tauri android init --config src-tauri/tauri.fork.conf.json`），生成的 `applicationId`
+  与 `namespace` 在**编译前**校验一次，产物再用 `aapt2 dump badging` 复核包名与 `versionName`
+  一次；两处任一不符即失败，不会静默产出一个包名正确的正式版。
+- 本机发布线继续用 `build-release-apk.sh`，两套脚本刻意不合并：前者处理 exFAT 外置盘
+  （内盘工程 + 符号链接 + `rootDirRel` 绝对路径改写），CI 的 ext4 上这些前提都不存在。
+
+### 从 CI 发一个分叉版
+
+手动触发 `release.yml` 时勾 `fork`、`android`、`release`，并在 `version` 填形如 `0.11.3-2`
+的版本号。三步：
+
+1. `guard` job 先校验输入组合：`release` 必须同时勾 `fork` 与 `android`，不能只跑 Windows、
+   不能用自建 Windows runner（都凑不出三端产物），`fork-<version>` 这个 tag 不能已存在。
+   校验不过直接失败，不占用构建机。
+2. 三个构建 job 共用同一个 `ONETHU_FORK_VERSION`：桌面端由 `build-fork.mjs` 复制一份分叉
+   配置到临时目录、只改 `version` 再交给 tauri；Android 端由 `build-fork-apk.sh` 做同样的事。
+   工作区文件不改，仓库里的版本号仍是默认值。
+3. `publish` job 收齐三端产物，用 `apps/desktop/scripts/make-release-manifest.mjs` 生成
+   `latest.json`（缺平台、或只剩未签名 APK 都会硬失败），以 `fork-<version>` 为 tag 建
+   Release，最后回读 `releases/latest/download/latest.json` 复核清单真的可解析。
+
+`version` 留空则沿用 `tauri.fork.conf.json` 里的值；只验证构建链时不要勾 `release`，
+否则会真的建出一个 Release（tag 已存在时 `guard` 会先拦下，避免覆盖已发布的内容）。
+
+**写权限：job 级 `permissions: contents: write` 在 fork 里有效。** 这一点被探针实测过
+（`probe-fork-token.yml`，四个对照）：声明了写权限的 job 能建 draft release，不声明的报
+`403 Resource not accessible by integration`；`gh api` 与 `gh release create` 两条路径都行，
+`rerun --failed` 之后也仍然可写。
+
+两个**不能**用作判据的东西：
+
+- 仓库设置 `actions/permissions/workflow` 的默认值（`read`）只决定「没声明时」的权限；
+- `GET /repos/<repo>` 的 `.permissions.push` 反映的是调用者的角色，**能建 Release 的 token
+  上它也是 false**（探针实测），拿它当写权限预检会误拦正确发布。
+
+因此 `guard` 的写权限自检是「真建一个 draft release 再删掉」（draft 不进 Releases 列表、
+不影响 `releases/latest`）。**`guard` 与 `publish` 都必须各自声明 `permissions: contents: write`**：
+仓库默认权限是 `read`，job 不声明就拿只读 token，自检会 100% 报
+`403 Resource not accessible by integration`——2026-10-25 那轮发版正是漏了 `guard` 这一行，
+在 16 秒内失败、三端构建全部 skipped。`GH_TOKEN` 仍是
+`secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN` 回落：正常情况下不需要 PAT，只在
+`GITHUB_TOKEN` 真的写不了时作为补救：
+
+```bash
+gh secret set RELEASE_TOKEN --repo cup113/OneTHU   # 可选：fine-grained PAT，只勾 Contents: Read and write
+```
+
+留一条**未解释**的记录：run 40054912059 的 `publish` 重跑曾报 403，而当时该 job 已声明
+`contents: write`，之后用同样的声明重跑探针却成功。原因至今未查明；若再次出现，先看
+`guard` 的写权限自检是否通过——通过了就说明问题不在权限，而在别处。
+
+## 8. Android 发布签名凭据
+
+`build-release-apk.sh` 的签名读 4 个环境变量：`ONETHU_KEYSTORE`、`ONETHU_KS_PASS`、
+`ONETHU_KEY_PASS`、`ONETHU_KEY_ALIAS`。手填容易出错，统一由脚本生成：
+
+```bash
+python3 tools/android-signing.py                     # 生成到 ~/.onethu/android-signing
+python3 tools/android-signing.py --dir /path/to/dir  # 换目录（凭据应跟着出发布包的构建机走）
+python3 tools/android-signing.py --self-test         # 临时目录自检，不碰真实凭据
+```
+
+产物：`onethu-release.keystore` 加三份等价的环境变量文件（`android-signing.env` / `.ps1` /
+`.cmd`）。用法：
+
+```bash
+source "<目录>/android-signing.env"          # bash
+. "<目录>/android-signing.ps1"               # PowerShell
+call "<目录>\android-signing.cmd"            # cmd
+```
+
+约束：
+
+- 口令只写在本机文件里，不进命令行参数、不进仓库、不回显；文件权限收到只有当前用户可读写
+  （`icacls` 在受限环境会失败，脚本会如实报出来，此时手工确认）。
+- 脚本**拒绝覆盖**已有 keystore：换库会让已安装的安卓包无法覆盖升级。要沿用旧库只重写环境
+  变量文件时用 `--reuse`（口令从 `ONETHU_KS_PASS` 读，缺省交互式询问）。
+- **PKCS12 只有一个口令**：`ONETHU_KEY_PASS` 与 `ONETHU_KS_PASS` 必须同值。keytool 对
+  `-keypass` 是「忽略并警告」而不是报错，两个口令分开写时生成阶段一切正常，直到 apksigner
+  真去解私钥才报 `UnrecoverableKeyException: Given final block not properly padded`
+  （2026-10-23 分叉包 CI 实测，见 `docs/plans/2026-10-23-fork-build-isolation.md`）。
+  生成器在落盘前用 jarsigner 真解一次私钥，生成与 `--reuse` 两条路径都验。
+- keystore 与口令要备份。丢失后只能换新库，届时已装用户必须先卸载再安装。
+- 脚本打印的证书 SHA-256 应与已发布包的证书一致：
+  `apksigner verify --print-certs <apk>`。不一致说明这次用的不是同一套签名库。
+
+### CI 上的签名（GitHub Secrets）
+
+`release.yml` 的 android job 读 4 个 secret，名字与上面 4 个环境变量一一对应：
+
+| secret | 内容 |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | `onethu-release.keystore` 的 base64 |
+| `ANDROID_KS_PASS` | keystore 口令 |
+| `ANDROID_KEY_PASS` | 私钥口令 |
+| `ANDROID_KEY_ALIAS` | 私钥别名 |
+
+写入方式（口令走 stdin，不进 argv、不回显）：
+
+```bash
+source "<目录>/android-signing.env"
+printf '%s' "$ONETHU_KS_PASS"  | gh secret set ANDROID_KS_PASS  --repo cup113/OneTHU
+printf '%s' "$ONETHU_KEY_PASS" | gh secret set ANDROID_KEY_PASS --repo cup113/OneTHU
+printf '%s' "$ONETHU_KEY_ALIAS" | gh secret set ANDROID_KEY_ALIAS --repo cup113/OneTHU
+base64 -w0 "<目录>/onethu-release.keystore" | gh secret set ANDROID_KEYSTORE_BASE64 --repo cup113/OneTHU
+```
+
+约束：
+
+- 缺 `ANDROID_KEYSTORE_BASE64` 时 android job 仍然成功，但产物名带 `-unsigned`：未签名 APK
+  无法安装，也没有证书可比对，仅用于验证构建链。这个后缀由构建脚本决定，workflow 不另行
+  改名，因此未签名包不会顶着发布包的名字出现。
+- 构建脚本在**编译前**先用 jarsigner 解一次私钥：口令不对会在一秒内失败并指明是哪一步，
+  而不是等十几分钟编译之后才在 apksigner 报加密异常。
+- keystore 一旦上传就固定下来：同包名换签名会触发 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`，
+  已装用户必须先卸载。换库时 4 个 secret 要一起换。
+- 构建机不需要保留 keystore 副本；CI 每次从 secret 还原到 runner 的临时目录，job 结束即消失。
+
+
