@@ -64,8 +64,19 @@ async function fixture({ files = new Map(), readGate } = {}) {
       info: { getSchedule: async () => [] },
     },
     './data.js': { getCalendarSnapshot: () => null },
+    // 上游 c1b3e394 把日历文档读写挪进了 sharedCalendar，并引入 CLI 共享运行时的探测。
+    // 离线夹具没有 CLI，探测恒为 false（走本地文件分支）；真要走共享分支就大声失败，
+    // 免得"以为测过共享路径"。
+    '../lib/sharedRuntime.js': {
+      usesSharedRuntime: () => false,
+      isCliTransferBusy: () => false,
+      sharedAccountGuard: async () => { throw new Error('CLI_SHARED_RUNTIME_UNEXPECTED'); },
+      sharedRuntimeRequest: async () => { throw new Error('CLI_SHARED_RUNTIME_UNEXPECTED'); },
+    },
   };
   const key = `__cloudCalendarTest${instance++}`; globalThis[key] = deps;
+  const sharedSource = compile('apps/desktop/src/state/sharedCalendar.ts').replace(/import \{([^}]+)\} from ["']([^"']+)["'];/g, (_all, names, path) => `const {${names.replace(/\s+as\s+/g, ": ")}} = globalThis[${JSON.stringify(key)}][${JSON.stringify(path)}];`);
+  deps['./sharedCalendar.js'] = await import(dataUrl(`${sharedSource}\n// ${key}-shared`));
   const source = compile('apps/desktop/src/state/cloudCal.ts').replace(/import \{([^}]+)\} from "([^"]+)";/g, (_all, names, path) => `const {${names.replace(/\s+as\s+/g, ": ")}} = globalThis[${JSON.stringify(key)}][${JSON.stringify(path)}];`);
   const mod = await import(dataUrl(`${source}\n// ${key}`));
   const mailCalls = [];

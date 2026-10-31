@@ -118,7 +118,10 @@ assert.ok(/offerScheduleToCalendar/.test(vaultRemote) && /offerScheduleToCalenda
 const overlayLib = read("apps/desktop/src/lib/overlay.ts");
 const mainTs = read("apps/desktop/src/main.tsx");
 assert.ok(/export async function syncOverlayPreference/.test(overlayLib), "overlay.ts 缺少启动同步函数");
-assert.ok(/syncOverlayPreference\(\)/.test(mainTs), "启动未调用 syncOverlayPreference（默认开的球不会显示）");
+// 分叉把启动时那条直调换成了保活门面：syncDesktopKeepAlive 内部按档位决定悬浮球是否显示，
+// 并调 syncOverlayPreference。守卫认门面，不再认已被取代的直调。
+assert.ok(/syncDesktopKeepAlive\(\)/.test(mainTs), "启动未建立常驻载体门面（syncDesktopKeepAlive）");
+assert.ok(/syncOverlayPreference\(\)/.test(read("apps/desktop/src/lib/desktopKeepAlive.ts")), "保活门面未同步悬浮球真实显示状态（默认开的球不会显示）");
 assert.ok(/syncOverlayPreference/.test(read("apps/desktop/src/components/OverlaySettingsSection.tsx")), "设置页进入时未同步真实显示状态");
 
 console.log("✓ 手机策略 + OH 限额卡静态守卫通过");
