@@ -17,11 +17,12 @@ import { t as i18n, msg as i18nMsg } from "../i18n/index.js";
 import { nativeFetch, nativeCookieClear, nativeCookieClearDomains, nativeSeedCookies, nativeSessionEpoch, isTauri } from "./transport.js";
 import { createAuthCookieBoundary } from "./authCookieBoundary.js";
 import { markLoginAttempt, markLoginSucceeded, loginCooldownLeftMs } from "./loginGate.js";
+import { ReloginPolicy } from "./reloginPolicy.js";
 import { networkLogUrl } from "./networkLog.js";
 import { bytesToBase64, http, session, setLastAuthEntry } from "./clients.js";
 import { setPlatformFetch, setPlatformClearCookies, uFetch } from "@onethu/info-lib/network";
 const SAVE_FINGER_URL = "https://id.tsinghua.edu.cn/b/doubleAuth/personal/saveFinger";
-import { InfoHelper, roam, verifyAndReLogin, getOutstandingLoginIdentity } from "@onethu/info-lib";
+import { InfoHelper, roam, verifyAndReLogin, getOutstandingLoginIdentity, probePortalSession } from "@onethu/info-lib";
 import { loadRemembered } from "./clients.js";
 import { fileRead, fileWrite, fileDelete, obfuscateSecret, deobfuscateSecret } from "./clients.js";
 import { withPrivacy } from "./privacy.js";
@@ -700,41 +701,178 @@ export async function libHydrateCredentials(): Promise<boolean> {
   return Boolean(h.userId && h.password);
 }
 
-export async function libEnsureSession(): Promise<boolean> {
-  // ① 对齐 info app：凭据 + 受信指纹先就位（否则重启后无从重登）
-  const hasCreds = await libHydrateCredentials();
-  // ② 权威探活 + 按需重登（info app 的 verifyAndReLogin 同源实现）：
-  //    取用户信息比对 ryh；只有明确过期才使用 helper 上的凭据重登。
-  //    比原来「webvpn 端点里有 XSRF-TOKEN 就算活」强：后者只证明网关发了票，
-  //    不证明 info 域会话是本人的活会话，会「假活」→ 后续 401 → 用户被踢。
-  if (hasCreds && loginCooldownLeftMs() <= 0) {
-    const relogged = await verifyAndReLogin(helper); // 返回 false = 会话还活着
-    if (relogged) void log("LIB-ENSURE 静默重登成功（verifyAndReLogin）");
-    return true;
-  }
-  // 探针走原生通道（Rust 仓=权威会话，重定向透明跟完）+ 现行 info 域。
-  const probe = await nativeFetch(
-    "https://webvpn.tsinghua.edu.cn/wengine-vpn/cookie?method=get&host=info.tsinghua.edu.cn&scheme=https&path=/f/info/gxfw_fg/common/index",
-    { method: "GET" },
-  );
-  if (probe.status !== 200) {
-    if (probe.status === 401) return false;
-    throw Object.assign(new Error(`University session probe failed (HTTP ${probe.status}).`), { status: probe.status });
-  }
-  const body = await probe.text();
-  if (/XSRF-TOKEN=/.test(body)) {
-    try {
-      http.jar.setFromResponse(new URL("https://webvpn.tsinghua.edu.cn/"), probe);
-    } catch {
-      /* ignore */
-    }
-    return true;
-  }
-  // This read-only fallback has no verified credentials (or is cooling down).
-  // It cannot promote an old in-flight attempt into a new password submission.
-  return false;
+/** 重登有效性证明窗口：登录链 settle ≠ 服务可用（2026-11-02 维护期实录）。
+ *  按墙钟计，不按探针次数计——单次探针卡住不能把 5 秒拖成传输层的 90 秒。 */
+const PROOF_WINDOW_MS = 5_000;
+/** 采样节奏：首探立即，之后隔 1.5s、再隔 2s —— 五秒窗口最多三次探针。
+ *  会话已死时单次探针是三请求（cookie → 应用入口预热 → 再 cookie），按 500ms
+ *  连采能把一次无效重登放大成十几二十次请求；而本模块对外部账密重放的节奏
+ *  是二十秒一次。证明要的是「有没有活过来」，不是把死会话再采样六遍。 */
+const PROOF_GAPS_MS: readonly number[] = [1_500, 2_000];
+/** 超出采样次数后的间隔（与最后一档相同） */
+const PROOF_MAX_GAP_MS = 2_000;
+const PROBE_TIMEOUT_MS = 3_000;
+
+/** 无效重登治理（退避 + 熔断）：30s → 60s → … → 10min，连续 3 次确认无效才开路。 */
+const reloginPolicy = new ReloginPolicy();
+
+/** 人工登录成功（含 2FA 完成）后由调用方复位：熔断不是终身的，用户新意图优先。 */
+export function resetReloginPolicy(): void {
+  reloginPolicy.reset();
 }
 
+/** 墙钟上限：把任意 Promise 截到 ms 内，超时给 fallback。
+ *  放弃的请求由传输层自己收尾——这里要的是「证明窗口真的只有 5 秒」。 */
+async function withDeadline<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolve) => {
+        timer = setTimeout(() => resolve(fallback), Math.max(1, ms));
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/** 门户会话探针：与「判定死亡」同一个判据（grjbxx 的 ryh），只读、不重登。
+ *  不用网关 cookie 判活——票活着恰是门户会话死时的常态，拿它证明会让无效重登
+ *  被记成有效、退避永不启动（这正是上一版的缺陷）。 */
+async function probePortal(): Promise<"alive" | "dead" | "unknown"> {
+  try {
+    return await probePortalSession(helper);
+  } catch (error) {
+    if ((error as { code?: string })?.code === "AUTH_SESSION_EXPIRED") return "dead";
+    throw error;
+  }
+}
+
+/** 证明一次重登是否真的生效：窗口内轮询门户探针，只有确认活/确认死才下结论。
+ *  以**最后一次**观测为准：中间夹着 5xx 的混合窗口一律算结论不明，不记死。 */
+async function proveReloginEffective(): Promise<"alive" | "dead" | "unknown"> {
+  const deadline = Date.now() + PROOF_WINDOW_MS;
+  let last: "dead" | "unknown" = "unknown";
+  for (let attempt = 0; ; attempt += 1) {
+    const remaining = Math.max(500, deadline - Date.now());
+    const verdict = await withDeadline(
+      probePortal().catch((): "unknown" => "unknown"),
+      remaining,
+      "unknown" as const,
+    );
+    if (verdict === "alive") return "alive";
+    last = verdict;
+    const gap = PROOF_GAPS_MS[attempt] ?? PROOF_MAX_GAP_MS;
+    if (Date.now() + gap >= deadline) return last;
+    await new Promise<void>((resolve) => setTimeout(resolve, gap));
+  }
+}
+
+/** 无效重登计账：连续 2 次开始退避，连续 3 次开路。 */
+function noteIneffectiveRelogin(reason: string): void {
+  reloginPolicy.noteIneffective();
+  void log(
+    `FORCE-LOGIN ineffective streak=${reloginPolicy.ineffective}` +
+      `${reloginPolicy.open ? " breaker=open" : ` next=+${Math.max(0, reloginPolicy.nextAt - Date.now())}ms`}（${reason}）`,
+  );
+}
+
+/** 结论不明的重登：只进退避，不开熔断——不明并不构成「重放凭据没用」的证据，
+ *  但反复重放同样没有意义，所以把节奏压下来而不是彻底停手。 */
+function noteIndeterminateRelogin(reason: string): void {
+  reloginPolicy.noteIndeterminate();
+  void log(
+    `FORCE-LOGIN indeterminate streak=${reloginPolicy.indeterminate}` +
+      ` next=+${Math.max(0, reloginPolicy.nextAt - Date.now())}ms（${reason}）`,
+  );
+}
+
+/** 重建后的补域（登录 settle 之后串行执行）：只作废「主会话换代后必然失效」的缓存。
+ *  不在这里漫游学习会话——learn reloginHook 与 data.relearnRoamOnce 本来就各自 roam
+ *  一次，重复漫游是白白多一次完整 id 往返。 */
+async function repairDomainsAfterRelogin(): Promise<void> {
+  const { info } = await import("./clients.js");
+  info.invalidateZhjwRoam(); // 教务一次性旗标：不让下一次 JSONP 撞同一死会话
+  info.resetStaticSessionCaches(); // libToken 等静态会话缓存不得跨换代存活
+}
+
+/** 并发去重：N 个面板同时失登会同时进 libEnsureSession（#withRenew 的 catch 绕过
+ *  #preRenew 的去重、直调 renewer）。没有这道单飞，一次无效重登会被记成 N 次，
+ *  一个网络抖动就能凑够三次把熔断打开——「误判锁死到重启」的另一半。 */
+const ensureFlight: { current: Promise<boolean> | null } = { current: null };
+
+export function libEnsureSession(): Promise<boolean> {
+  const current = ensureFlight.current;
+  if (current) return current;
+  const promise = runEnsureSession().finally(() => {
+    if (ensureFlight.current === promise) ensureFlight.current = null;
+  });
+  ensureFlight.current = promise;
+  return promise;
+}
+
+async function runEnsureSession(): Promise<boolean> {
+  // 熔断打开：自动重放停止，但仍做一次只读探针——「其实还活着」的误判必须能自己解开，
+  // 否则一次网络抖动就把自动恢复锁到进程结束。
+  if (reloginPolicy.open) {
+    const verdict = await withDeadline(
+      probePortal().catch((): "unknown" => "unknown"),
+      PROBE_TIMEOUT_MS,
+      "unknown" as const,
+    );
+    if (verdict === "alive") {
+      reloginPolicy.reset();
+      void log("LIB-ENSURE 熔断期间探针仍判活，复位自动恢复");
+      return true;
+    }
+    void log("LIB-ENSURE breaker open：自动恢复已停止，等待用户重新登录");
+    return false;
+  }
+
+  // ① 对齐 info app：凭据 + 受信指纹先就位（否则重启后无从重登）
+  const hasCreds = await libHydrateCredentials();
+  // 闸门统一在这里拦：20s 硬冷却（loginGate）+ 退避/熔断（reloginPolicy）。
+  // 不存在第二条绕过闸门的重登旁路。
+  const canRelogin = hasCreds && loginCooldownLeftMs() <= 0 && reloginPolicy.gate().allowed;
+
+  // ② 权威探活 + 按需重登（info app 的 verifyAndReLogin 同源实现）
+  if (canRelogin) {
+    const joinedPendingLogin = libLoginPending();
+    const relogged = await verifyAndReLogin(helper); // 返回 false = 会话还活着
+    if (!relogged) {
+      // 一次健康的权威探活足以证明服务可用：陈旧的无效计数就地衰减，
+      // 否则两次历史抖动会留在账上，任何一次无关事件都能凑够三次、误开熔断。
+      reloginPolicy.noteEffective();
+      return true;
+    }
+    if (joinedPendingLogin) {
+      // 并入的是一次进行中的登录（用户正在 2FA）：没有新登录可证明，不记账
+      void log("LIB-ENSURE 并入进行中的登录，本轮不作结论");
+      return false;
+    }
+    void log("LIB-ENSURE 静默重登成功（verifyAndReLogin）");
+    const verdict = await proveReloginEffective();
+    if (verdict === "alive") {
+      reloginPolicy.noteEffective();
+      await repairDomainsAfterRelogin().catch(() => undefined);
+      return true;
+    }
+    if (verdict === "dead") noteIneffectiveRelogin("verifyAndReLogin");
+    else noteIndeterminateRelogin("verifyAndReLogin");
+    return false;
+  }
+
+  // ③ 只读探针（无凭据 / 冷却中 / 退避中）：不改会话状态，也不重放凭据。
+  //    传输与 HTTP 错误原样抛给调用方（区分「服务不可用」与「未登录」的既有契约）。
+  const verdict = await probePortal();
+  if (verdict === "alive") {
+    // 服务明明可用：陈旧的无效计数就地衰减，退避随之解除
+    reloginPolicy.noteEffective();
+    return true;
+  }
+  return false;
+}
 /** 二级课表（实验课）自实现：直连拉 portal3rd + 正则解析（本地验证过）。
  *  lib 的 roaming+substring 链路曾静默空（DIAG 有页面、PARSE 无结果），
  *  黑盒绕开一次到位。按 [from,to] 日期区间返回扁平条目。 */
@@ -817,6 +955,16 @@ export const getSecondaryEntries = async (
 /** 强制完整重登（选课死结借用）：不走探活短路——id 会话权威单一来源，
  *  选课判死时由这里重建，选课不再自清仓互踢（2026-09-18 架构定案） */
 export async function libForceRelogin(): Promise<boolean> {
+  // 闸门同源：熔断/退避生效时不得重放账密。选课死结是自动触发（不是用户点了
+  // 「登录」），熔断的语义正是「重放没用」——放它过去等于给自动重放开了后门，
+  // 也正是评审指出的「不存在旁路」与实际不符之处。
+  const gate = reloginPolicy.gate();
+  if (!gate.allowed) {
+    void log(`FORCE-LOGIN 跳过：${gate.reason === "breaker" ? "熔断" : "退避"}生效中（选课死结等下一次）`).catch(
+      () => undefined,
+    );
+    return false;
+  }
   // 凭据 + 受信指纹统一从持久层回灌（进程重启后 inflight 即空，此前直接
   // return false → 重启后的强制重登永远不可用，只剩手动退出重登一条路）
   await libHydrateCredentials();

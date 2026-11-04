@@ -1313,6 +1313,8 @@ export {roam, clearOutstandingLogin};
 export {verifyAndReLogin} from "./lib/core";
 export {hasOutstandingLogin, getOutstandingLoginIdentity} from "./lib/core";
 export {roamingWriteWrapper, roamingWriteWrapperWithMocks} from "./lib/core";
+/** 网关 cookie 端点的封闭世界判定（2026-11-02：空体/网关壳 = 会话死） */
+export {classifyGatewayProbe, getCsrfToken, probePortalSession, type GatewayProbeVerdict} from "./lib/core";
 
 export { organizationGitApi } from "./lib/gitlab";
 export { LoginPreparationError } from "./utils/error";

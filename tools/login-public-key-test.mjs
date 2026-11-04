@@ -262,7 +262,9 @@ await check("a restricted session probe cannot escalate ordinary resource failur
   assert.equal(admissions, 0);
 });
 await check("session probe transport, HTTP errors and malformed responses cannot submit credentials", async () => {
-  const cases = ["network", "403", "429", "500", "502", "503", "504", "cookie-empty", "cookie-guide", "invalid-json", "empty-object", "wrong-owner"];
+  /* 2026-11-02：空体与网关壳不再是「malformed」——它们是网关 cookie 端点上的
+   * 明确死相（封闭世界判定），必须在下一个用例里换来一次正常恢复。 */
+  const cases = ["network", "403", "429", "500", "502", "503", "504", "invalid-json", "empty-object", "wrong-owner"];
   for (const shape of cases) {
     clearOutstandingLogin();
     let posts = 0, admissions = 0;
@@ -272,7 +274,7 @@ await check("session probe transport, HTTP errors and malformed responses cannot
       if (shape === "network") throw new TypeError("fixture connection failure");
       if (/^\d+$/.test(shape)) return reply("unavailable", url, Number(shape));
       if (url.includes("/wengine-vpn/cookie")) {
-        return reply(shape === "cookie-empty" ? "" : shape === "cookie-guide" ? '<script>var __vpn_hostname_data="fixture";var __vpn_app_hostname_data="fixture";</script>' : "XSRF-TOKEN=fixture-csrf;", url);
+        return reply("XSRF-TOKEN=fixture-csrf;", url);
       }
       return reply(shape === "invalid-json" ? "<main>Upstream unavailable</main>" : shape === "wrong-owner" ? '{"object":{"ryh":"654321"}}' : '{"object":null}', url);
     });
@@ -282,7 +284,9 @@ await check("session probe transport, HTTP errors and malformed responses cannot
   }
 });
 await check("only confirmed HTTP 401, login pages, explicit JSON expiry and portal error verdicts permit normal recovery", async () => {
-  for (const shape of ["401", "cookie-login", "user-login", "json-expired", "portal-error", "alive"]) {
+  /* cookie-empty / cookie-guide：2026-11-02 实录的空 200 与网关壳——同属「确认死」，
+   * 必须触发一次恢复（此前它们是静默死区，热上下文里永远不自愈）。 */
+  for (const shape of ["401", "cookie-login", "cookie-empty", "cookie-guide", "user-login", "json-expired", "portal-error", "alive"]) {
     clearOutstandingLogin();
     let posts = 0, admissions = 0;
     const h = { ...helper(), beforeLoginAttemptHook: async () => { admissions++; } };
@@ -290,6 +294,8 @@ await check("only confirmed HTTP 401, login pages, explicit JSON expiry and port
       if (init.method === "POST") posts++;
       if (url.includes("/wengine-vpn/cookie")) {
         if (shape === "401") return reply("expired", url, 401);
+        if (shape === "cookie-empty") return reply("", url);
+        if (shape === "cookie-guide") return reply('<script>var __vpn_hostname_data="fixture";var __vpn_app_hostname_data="fixture";</script>', url);
         return reply(shape === "cookie-login" ? '<a href="https://id.tsinghua.edu.cn/do/off/ui/auth/login/form/fixture/0">Sign in</a>' : "XSRF-TOKEN=fixture-csrf;", url);
       }
       if (url.includes("/grjbxx")) return reply(

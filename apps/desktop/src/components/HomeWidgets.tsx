@@ -687,7 +687,19 @@ export function TodayClassesWidget({ upcoming = false }: { upcoming?: boolean } 
   if (!data?.length && state === "loading") return <SkeletonRows rows={3} />;
   if (!data?.length && state === "error") return <ErrorNote text={error ?? i18n("components.exthw.yktcontentlist.dc91444c4449")} onRetry={() => void reload()} />;
   const hadClasses = (data ?? []).some(s => s.date ? s.date === today : s.dayOfWeek === wd);
-  return <ClassRows events={events} navigate={navigate} emptyText={upcoming && hadClasses ? i18n("components.livetiles.d1adf68fb7c1") : undefined} />;
+  const rows = <ClassRows events={events} navigate={navigate} emptyText={upcoming && hadClasses ? i18n("components.livetiles.d1adf68fb7c1") : undefined} />;
+  // 有旧数据时失败不再无声（2026-11-03 实录）：今日课程一天不变，用户分不出
+  // 「没更新」和「更新了」——教务 JSONP 撞死会话就这样被看了三个多小时。
+  if (state !== "error") return rows;
+  // 必须是一个宿主子节点：`.wg-card > *` 是 `flex:1 1 auto` 的弹性项，Fragment
+  // 会让错误条与课表各占一份磁贴高度（课表被压到约三分之二）。这里自己分配：
+  // 列表吃掉剩余空间且可滚，错误条固定在下沿。
+  return (
+    <div style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: "1 1 auto" }}>
+      <div style={{ flex: "1 1 auto", minHeight: 0, overflow: "auto" }}>{rows}</div>
+      <ErrorNote text={error ?? i18n("components.exthw.yktcontentlist.dc91444c4449")} onRetry={() => void reload()} />
+    </div>
+  );
 }
 
 /**

@@ -305,6 +305,14 @@ http.onAuthRequired(async () => {
   await libSoftRelogin();
 });
 
+/** 人工登录 / 2FA 完成时复位上面那道退避：它是「自动重试太频繁」的闸，不是对
+ *  用户新意图的约束。不复位的话，用户刚过完二验，自动恢复还会被旧冷却挡住最多
+ *  十分钟——熔断与退避是两套计数，必须一起复位。 */
+export function resetSoftReloginBackoff(): void {
+  libSoftFailStreak = 0;
+  libSoftCooldownUntil = 0;
+}
+
 /** 诊断落盘（UI 各处复用；写 /tmp/onethu-debug.log） */
 export async function logLine(text: string): Promise<void> {
   try {
@@ -436,11 +444,14 @@ async function performLogin(
       session.state = "ready";
       // SAVE_FINGER 受信凭据同步（2FA 链内签发的才有效；直登后补签=身份异常）
       {
-        const { helper, getSelfFinger3 } = await import("./infoLib.js");
+        const { helper, getSelfFinger3, resetReloginPolicy } = await import("./infoLib.js");
         const fresh = getSelfFinger3() ||
           (helper as unknown as { fingerGenPrint?: string }).fingerGenPrint || "";
         session.finger3 = fresh || session.finger3 || "";
         setLibFinger3(session.finger3);
+        // 一次明确的完整登录（含启动静默重登）代表用户新意图：复位无效重登计数/熔断
+        resetReloginPolicy();
+        resetSoftReloginBackoff();
       }
       session.injectCredentials(username, password);
       await persist();
@@ -527,6 +538,10 @@ export async function verify2FA(type: string, code: string, trust: boolean): Pro
     }
     if (pendingSecret) session.injectCredentials(pendingSecret.username, pendingSecret.password);
     await persist();
+    // 2FA 完成才是这一次完整登录的终点：熔断/无效计数必须在这里复位，
+    // 否则用户手动过完二验，自动恢复仍是停摆状态（只能重启）。
+    (await import("./infoLib.js")).resetReloginPolicy();
+    resetSoftReloginBackoff();
     await logLine("VERIFY-OK (lib 链完成)");
     // R17 23.3-4：2FA + 信任设备完成 → 自动重试一次此前失败的 TUOJ 漫游
     retryTuojAfterTrust();

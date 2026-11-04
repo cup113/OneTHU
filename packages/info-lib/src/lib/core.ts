@@ -12,6 +12,7 @@ import {
     ID_LOGIN_URL,
     ID_WEBSITE_BASE_URL,
     ID_WEBSITE_LOGIN_URL,
+    INFO_ENTRY_URL,
     INVOICE_LOGIN_URL,
     LOGIN_URL,
     LOGOUT_URL,
@@ -82,16 +83,77 @@ const getWebVPNUrl = (urlIn: string): string => {
     return `https://oauth.tsinghua.edu.cn/lb-auth/lbredirect?scheme=${scheme}&host=${host}&port=${port}&uri=${uri}`;
 };
 
-export const getCsrfToken = async () => {
-    const cookie = await uFetch(GET_COOKIE_URL);
-    const q = /XSRF-TOKEN=(.+?);/.exec(cookie + ";");
-    if (q === null || q[1] === undefined) {
-        if (isConfirmedLoginPage(cookie)) {
-            throw Object.assign(new IdAuthError("The university session requires sign-in."), {code: "AUTH_SESSION_EXPIRED"});
-        }
-        throw new Error("Failed to get csrf token.");
+/** Closed-world verdict for the gateway's own cookie endpoint.
+ *
+ *  This endpoint has no business-page shape: it answers with the cookie list
+ *  (the only positive alive evidence) or with an authentication artefact.
+ *  2026-11-02 08:11–08:51 live traces: five consecutive `200` responses with an
+ *  **empty body** while the portal session was dead. Treating that as an unknown
+ *  failure kept every recovery path silent for as long as the process lived
+ *  (only a restart recovered), because verifyAndReLogin may only resubmit
+ *  credentials on a positively expired verdict.
+ *
+ *  Transport failures never reach here — uFetch throws before a status exists. */
+export type GatewayProbeVerdict = "alive" | "expired" | "unknown";
+
+export const classifyGatewayProbe = (body: string): GatewayProbeVerdict => {
+    if (/XSRF-TOKEN=(.+?);/.test(body + ";")) return "alive";
+    if (isConfirmedLoginPage(body)) return "expired";
+    // Empty 200: the gateway minted nothing for the target host.
+    if (body.trim() === "") return "expired";
+    // WebVPN shell page: the wengine ticket itself is gone.
+    if (body.length < 4000 && body.includes("__vpn_hostname_data") && body.includes("__vpn_app_hostname_data")) {
+        return "expired";
     }
-    return q[1];
+    // Anything else non-empty keeps the original "unknown failure" verdict:
+    // an unrecognised 200 is not proof that the user must re-authenticate.
+    return "unknown";
+};
+
+export const getCsrfToken = async () => {
+    let cookie = await uFetch(GET_COOKIE_URL);
+    let q = /XSRF-TOKEN=(.+?);/.exec(cookie + ";");
+    if (q !== null && q[1] !== undefined) return q[1];
+    // 空体不必然是会话死：全新 SSO 会话还没访问过 info 时，网关对这个域**没有**
+    // 可回的 cookie（SDK identityProbe 的同款观测）。判死之前先做一次应用入口预热
+    // ——这一步把「冷启动误判」挡在凭据重放之外，代价只是一次 GET。
+    if (cookie.trim() === "") {
+        await uFetch(INFO_ENTRY_URL).catch(() => "");
+        cookie = await uFetch(GET_COOKIE_URL);
+        q = /XSRF-TOKEN=(.+?);/.exec(cookie + ";");
+        if (q !== null && q[1] !== undefined) return q[1];
+    }
+    if (classifyGatewayProbe(cookie) === "expired") {
+        throw Object.assign(new IdAuthError("The university session requires sign-in."), {code: "AUTH_SESSION_EXPIRED"});
+    }
+    throw new Error("Failed to get csrf token.");
+};
+
+/** 只读权威探活：与 verifyAndReLogin 的判据同源（grjbxx 的 ryh），但**绝不重登**。
+ *
+ *  为什么不用网关 cookie：网关票活着恰恰是「门户会话已死」时的常态
+ *  （core.ts 里 2026-10-25 的门户错误 JSON 实录就是这种形态）。拿网关判活等于
+ *  用「票还挂着」证明「会话可用」，会让无效重登被记成有效、退避永不启动。
+ *  也用它做重登后的有效性证明——判死的判据必须和证明的判据是同一个。
+ *  传输/HTTP 错误原样抛出，由调用方决定「未知」还是「服务不可用」。 */
+export const probePortalSession = async (helper: InfoHelper): Promise<"alive" | "dead" | "unknown"> => {
+    const csrf = await getCsrfToken();
+    const body = await uFetch(`${USER_DATA_URL}?_csrf=${csrf}`);
+    if (isConfirmedLoginPage(body)) return "dead";
+    let data: { result?: unknown; object?: { ryh?: unknown } | null; status?: unknown; code?: unknown; msg?: unknown; message?: unknown };
+    try {
+        data = JSON.parse(body);
+    } catch {
+        return "unknown";
+    }
+    if (data?.status === 401 || data?.code === 401) return "dead";
+    if (/^(?:未登录|请先登录|登录已失效|登录状态已失效|login required|not authenticated)[。.!]?$/i.test(String(data?.msg ?? data?.message ?? "").trim())) return "dead";
+    // 门户把死掉的后端会话报成 HTTP 200 {"result":"error","object":null}（与 verifyAndReLogin 同判据）
+    if (data?.result === "error" && (data?.object ?? null) === null) return "dead";
+    const ryh = data?.object?.ryh;
+    if (ryh == null || String(ryh).trim() === "") return "unknown";
+    // 别人的会话不算「我的会话活着」
+    return String(ryh) === helper.userId ? "alive" : "dead";
 };
 
 /** Positive login markers only. A gateway shell, missing token or malformed

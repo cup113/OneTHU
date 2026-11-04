@@ -25,6 +25,10 @@ export const GET_COOKIE_URL =
     "https://webvpn.tsinghua.edu.cn/wengine-vpn/cookie?method=get&host=info.tsinghua.edu.cn&scheme=https&path=/f/info/gxfw_fg/common/index";
 export const USER_DATA_URL =
     "https://webvpn.tsinghua.edu.cn/https/77726476706e69737468656265737421f9f9479369247b59700f81b9991b2631506205de/b/info/gxfw_fg/common/grjbxx";
+/** info 应用入口页。空 cookie 体可能只说明「这个应用还没被访问过」（SDK
+ *  identityProbe 同款观测），判死之前先用它预热一次。 */
+export const INFO_ENTRY_URL =
+    "https://webvpn.tsinghua.edu.cn/https/77726476706e69737468656265737421f9f9479369247b59700f81b9991b2631506205de/f/info/gxfw_fg/common/index";
 export const ROAMING_URL =
     "https://webvpn.tsinghua.edu.cn/https/77726476706e69737468656265737421f9f9479369247b59700f81b9991b2631506205de/b/yyfw/vyyfwxx/info/portal_fg/common/onlineAppRedirect";
 export const LOGOUT_URL = "https://webvpn.tsinghua.edu.cn/logout";

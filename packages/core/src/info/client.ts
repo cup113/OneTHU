@@ -259,9 +259,22 @@ function newsUrl(raw: string): string | undefined {
 /** 家园网乐观会话新鲜窗：窗口内的业务响应成功即视为会话存活，ensure 零网络 */
 const DORM_OK_TTL = 5 * 60 * 1000;
 
+/** 教务 JSONP 的「服务端处理超时」页：与「会话死」同一个 timeout.jsp 形状，
+ *  但原因也可能是查询窗口太大。它**不是** AuthRequiredError——上层不得因此重登，
+ *  只有教务局部的重漫游可以拿它试一次（见 #withZhjwRoam 的 retryable）。 */
+class ZhjwWindowTimeout extends Error {
+  override readonly name = "ZhjwWindowTimeout";
+}
+
+/** 考试的「可能是会话死」判据：登录页/引导页，外加超时页（窗口问题与死会话同形）。 */
+const zhjwLooksDead = (e: unknown): boolean =>
+  e instanceof AuthRequiredError || e instanceof ZhjwWindowTimeout;
+
 export class InfoClient {
   #http: HttpClient;
   #zhjwRoamed = false;
+  /** 教务漫游单飞：并发取数（今日课程 + 校园数据）共享同一条漫游链 */
+  #zhjwRoamInflight: Promise<void> | null = null;
   /** 校园卡当前登录用户（card.ts accountBaseInfo.user） */
   #cardUser = "";
   /** 会话过期续期回调（CampusSession 注入：重跑 roam-id / card 登录） */
@@ -326,6 +339,13 @@ export class InfoClient {
     this.#libRoomAccNo = null;
     this.#libRoomPid = null;
     this.lastDebug = "";
+  }
+
+  /** 会话重建成功后调用：作废「教务已漫游」一次性旗标，让下一次 getSchedule/
+   *  getExams 真正重走 #ensureZhjw（否则 JSONP 恒吐登录页、永远撞同一死会话）。
+   *  与 #withRenew 内部置 false 同一语义，供外部恢复链（重登后的补域）复用。 */
+  invalidateZhjwRoam(): void {
+    this.#zhjwRoamed = false;
   }
 
   /** forceEnsure 并发去重：同 scope 只跑一次重建（漫游链并发跑会在会话上互踩） */
@@ -693,6 +713,16 @@ export class InfoClient {
 
   async #ensureZhjw(): Promise<void> {
     if (this.#zhjwRoamed) return;
+    // 单飞：并发取数（首页的「今日课程」与校园数据各取一次课表）会同时撞上死会话，
+    // 各自清旗标后各跑一条漫游链——漫游链在字符串会话上互踩，本文件的 #single
+    // 早就为同一形状埋了闸。这里让第二条请求搭同一条链。
+    this.#zhjwRoamInflight ??= this.#roamZhjw().finally(() => {
+      this.#zhjwRoamInflight = null;
+    });
+    await this.#zhjwRoamInflight;
+  }
+
+  async #roamZhjw(): Promise<void> {
     const { page, target } = await this.#roamInfoService(urls.JXRL_ROAM_ID);
     // 真·引导页 = 会话未在 wengine 侧建立，绝不标记（注入了 __vpn_* 的被代理页面不算）
     if (this.#http.wengineInterstitial(page)) {
@@ -707,10 +737,32 @@ export class InfoClient {
     this.#zhjwRoamed = true;
   }
 
+  /** 教务域局部自愈：JSONP 撞登录/超时页说明**教务自己的**会话死了，与门户会话无关。
+   *  2026-11-03 实录：同一秒 grjbxx/learn 全 200，只有 jxmh_out.do 302→timeout.jsp；
+   *  门户判活的重建钩子此时正确地什么都不做，而 #withRenew 把「被节流跳过」当成
+   *  「续期失败」直接放弃——#zhjwRoamed 仍为真，之后每次取数都撞同一个死会话。
+   *  这里就地重漫游一次（幂等、便宜）再重试一次；重漫游自身失败会抛 AuthRequired，
+   *  由 #withRenew 决定要不要升级成整条会话重建——不做第二次循环。
+   *  `retryable` 决定什么算「可能是会话死了」：课表只有 AuthRequired，考试还要多认
+   *  一个「服务端处理超时」页（同一个 timeout.jsp，但可能只是查询窗口太大）。 */
+  async #withZhjwRoam<T>(
+    op: () => Promise<T>,
+    retryable: (e: unknown) => boolean = (e) => e instanceof AuthRequiredError,
+  ): Promise<T> {
+    await this.#ensureZhjw();
+    try {
+      return await op();
+    } catch (e) {
+      if (!retryable(e)) throw e;
+      this.#zhjwRoamed = false;
+      await this.#ensureZhjw();
+      return await op();
+    }
+  }
+
   /** 课表（先漫游教务，再取 JSONP；字段对照 thu-info-lib parseJSON：nq/nr/dd/fl/kssj/jssj） */
   async getSchedule(startDate: string, endDate: string): Promise<ScheduleEntry[]> {
-    return this.#withRenew(async () => {
-      await this.#ensureZhjw();
+    return this.#withRenew(() => this.#withZhjwRoam(async () => {
       const text = await this.#withTimeout(
         this.#http.text(urls.ZHJW_SCHEDULE_JSONP(compactDate(startDate), compactDate(endDate))),
         20_000,
@@ -761,7 +813,7 @@ export class InfoClient {
       // OneTHU getSchedule 以日期区间为参、无学期 id —— 按区间末端月份推导：
       // 6-8 月属 (y-1)-y-3 夏季学期；仅此窗口且 JSONP 为空才尝试 CR（查不到就是查不到）。
       return this.#crScheduleFallback(startDate, endDate);
-    });
+    }));
   }
 
   /** zhjwxk 会话（CR 一级课表兜底用）：HttpClient 共享 jar + 内存凭据；
@@ -1278,12 +1330,11 @@ export class InfoClient {
    * （thu-info-lib 无独立考试接口；RN 端同样以课表分类呈现考试。）
    */
   async getExams(): Promise<ExamEntry[]> {
-    return this.#withRenew(async () => {
+    return this.#withRenew(() => this.#withZhjwRoam(async () => {
       const now = new Date();
       const startYear = now.getMonth() >= 7 ? now.getFullYear() : now.getFullYear() - 1;
       const start = `${startYear}0901`;
       const end = `${startYear + 1}0731`;
-      await this.#ensureZhjw();
       // 2026-09-14 实锤：全年窗口（0901→0731）让教务 JSONP 返回 HTML 错误页
       // （renderer=webkit 门户型页面，非登录页）；同接口周窗口的 getSchedule
       // 一直正常。拆两段学期窗口查询再合并，避开服务端超大范围限制。
@@ -1318,9 +1369,10 @@ export class InfoClient {
             throw new AuthRequiredError("考试 JSONP 落在登录/超时页");
           }
           if (/jsp\.timeout/i.test(text)) {
-            // jsp.timeout=服务端处理超时（大查询窗口触发），非会话失效——
-            // 误归类会触发 renew/relogin 搅局甚至踢会话
-            throw new Error("考试查询窗口触发服务端处理超时（jsp.timeout），已缩窗重试仍达");
+            // jsp.timeout=服务端处理超时（大查询窗口触发），也可能是教务会话死了。
+            // 不归成 AuthRequired：那会触发 renew/relogin 搅局甚至踢会话。只在
+            // #withZhjwRoam 的局部重漫游里算一次「可能死」，重试仍失败就如实上报。
+            throw new ZhjwWindowTimeout("考试查询窗口触发服务端处理超时（jsp.timeout），已缩窗重试仍达");
           }
           throw new Error(`考试接口返回非 JSON（终URL ${String(this.#http.lastFinalUrl ?? "").slice(0, 80)} 前80字：${text.replace(/\s+/g, " ").slice(0, 80)}）`);
         }
@@ -1351,7 +1403,7 @@ export class InfoClient {
       return out.sort((a, b) =>
         `${a.date}${a.startTime ?? ""}`.localeCompare(`${b.date}${b.startTime ?? ""}`),
       );
-    });
+    }, zhjwLooksDead));
   }
 
   /* ------------------------- 校园卡（card.ts 移植） ------------------------- */
