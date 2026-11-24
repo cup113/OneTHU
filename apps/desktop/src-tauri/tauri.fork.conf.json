@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OneTHU-Fork",
-  "version": "0.11.4-6",
+  "version": "0.11.4-7",
   "identifier": "app.onethu.desktop.fork"
 }

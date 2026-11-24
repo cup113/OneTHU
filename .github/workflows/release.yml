@@ -417,12 +417,17 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
         run: |
+          notes="分叉 $VERSION：网络学堂的作业提交现在可以把文件从资源管理器直接拖进提交卡——悬停时卡片出主色虚线框与「松开即可添加附件」，松手即等于选好文件，不必再点「选择文件」。同一处改动顺手修好了 Windows 上一直失效的文件拖入：暂存箱的拖放接收与雨课堂作答编辑器的拖图上传也一起恢复，根因是窗口开着 Tauri 原生拖放，文件在 WebView2 外层就被截走，网页的 drop 事件拿不到文件。
+
+          会话自愈这轮重做了判定、证明与闸门：网关 cookie 端点改成封闭世界分类（拿到 XSRF-TOKEN 才算活、登录页或壳页算死、其余算未知），空响应不再直接判死，先预热一次应用入口再问；重登是否生效改由门户探针回答，避免「网关票还活着、门户已经死了」时把无效重登当成有效；连续三次确认死亡才熔断，结论不明只进退避，并发请求共用同一次自愈。教务域的课表与考试在撞上登录页或超时页时就地重新漫游一次再重试，今日课程读取失败时不再无声。
+
+          更新源仍指向 cup113/OneTHU。"
           node apps/desktop/scripts/make-release-manifest.mjs \
             --dir release-artifacts \
             --version "$VERSION" \
             --out release-out/latest.json \
             --releasedAt "$(date -u +%F)" \
-            --notes "分叉 $VERSION：基线换到上游 38a3aa69（NextTHULearn 插件对齐、课程看板与官方未读/课表数据）——网络学堂 403 现在按会话失效自愈：重建会话后用新凭据重放，重试不再复用死凭据，而取凭据页上的 403 仍归为服务失败；附件 404 不再误报「登录失效」，已批阅/已过期作业不再因提交页被拒而整页报错。分叉侧进版：全天事件横幅行（方案 A：落星期列、跨天连续、超出道次折叠成 +N）、自定义日程重复规则、悬浮圆钮拖动与手机底部 Sheet、系统日历差异同步、CLI 运行时可分离安装（从本仓 Release 取与安装包同版本的 CLI 包）、托盘/悬浮球保活与 Windows 私有存储适配。更新源仍指向 cup113/OneTHU。"
+            --notes "$notes"
       - name: Write release notes
         env:
           VERSION: ${{ inputs.version }}
