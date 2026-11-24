@@ -4648,6 +4648,7 @@ const locale = {
     "pages.learn.assignmentdetailpage.6320b4a8722a": "Status",
     "pages.learn.assignmentdetailpage.6a250414e278": "Comments",
     "pages.learn.assignmentdetailpage.6bc352ca0ce0": "Submission time",
+    "pages.learn.assignmentdetailpage.752f5c716c26": "Release to attach the file",
     "pages.learn.assignmentdetailpage.7da05f7e2250": "Sends the withdrawal request directly to Web Learning; assignments requiring attachments will be rejected with a message",
     "pages.learn.assignmentdetailpage.8032af4a590f": "Not submitted",
     "pages.learn.assignmentdetailpage.81ce4f7cb8ae": "Open in system browser",

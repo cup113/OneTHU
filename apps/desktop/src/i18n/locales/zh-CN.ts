@@ -4648,6 +4648,7 @@ const locale = {
     "pages.learn.assignmentdetailpage.6320b4a8722a": "状态",
     "pages.learn.assignmentdetailpage.6a250414e278": "批语",
     "pages.learn.assignmentdetailpage.6bc352ca0ce0": "提交时间",
+    "pages.learn.assignmentdetailpage.752f5c716c26": "松开即可添加附件",
     "pages.learn.assignmentdetailpage.7da05f7e2250": "直接向网络学堂发撤回请求；必交附件的作业会被拒绝并提示",
     "pages.learn.assignmentdetailpage.8032af4a590f": "未提交",
     "pages.learn.assignmentdetailpage.81ce4f7cb8ae": "在系统浏览器打开",

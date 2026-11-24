@@ -20,6 +20,7 @@ import { useLearnNavSemester } from "./shared.js";
 import { openExternal } from "../info/openExternal.js";
 import { DownloadOpenButtons } from "../../components/DownloadOpenButtons.js";
 import { isAndroidNavigator } from "../../lib/androidHost.js";
+import { useFileDrop } from "../../lib/fileDropZone.js";
 import { clearNeedFile, isNeedFile, markNeedFile } from "../../state/learnAttachmentReq.js";
 import { parseLearnTime } from "@onethu/core";
 import type { HomeworkPageDetail, LearnAttachment } from "@onethu/core";
@@ -41,6 +42,9 @@ export function AssignmentDetailPage({ courseId: courseIdProp, itemId: itemIdPro
   const [pageError, setPageError] = useState("");
   const [subContent, setSubContent] = useState("");
   const [subFile, setSubFile] = useState<File | null>(null);
+  /* 拖进提交卡的文件与「选择文件」同一条路（setSubFile），不另起上传实现。
+     窗口侧前提：tauri.conf.json 的 dragDropEnabled=false，否则拖放到不了网页。 */
+  const fileDrop = useFileDrop((file) => { setSubFile(file); });
   const [subBusy, setSubBusy] = useState(false);
   const [subMsg, setSubMsg] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -411,7 +415,11 @@ export function AssignmentDetailPage({ courseId: courseIdProp, itemId: itemIdPro
       {page?.hasSubmitForm ? (
         <Card className="detail-sec">
           <div className="detail-sec-head">{h.submitted ? i18n("pages.learn.assignmentdetailpage.bd33e412694b") : i18n("pages.learn.assignmentdetailpage.dfb054a0aec6")}</div>
-          <div style={{ padding: "8px 16px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+          <div
+            ref={fileDrop.ref}
+            className={"hw-file-drop" + (fileDrop.hot ? " is-hot" : "")}
+            style={{ padding: "8px 16px 14px", display: "flex", flexDirection: "column", gap: 8 }}
+          >
             {/* 正文：讨论区同款 Quill 富文本编辑器（zynr 产物即 HTML，与站点提交语义一致） */}
             <RichEditor
               value={subContent}
@@ -476,6 +484,7 @@ export function AssignmentDetailPage({ courseId: courseIdProp, itemId: itemIdPro
               <div style={{ fontSize: 12, color: "var(--og-content-disabled)" }}>{i18nRich("pages.learn.assignmentdetailpage.c514d7c4f9f2", { value: fmtDateTime(h.submitTime) })}</div>
             ) : null}
             {subMsg ? <div style={{ fontSize: 12, color: subOk ? "var(--green)" : "var(--red)", wordBreak: "break-all" }}>{subMsg}</div> : null}
+            {fileDrop.hot ? <div className="hw-file-drop-hint" aria-hidden="true"><span>{i18n("pages.learn.assignmentdetailpage.752f5c716c26")}</span></div> : null}
           </div>
         </Card>
       ) : null}

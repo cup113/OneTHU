@@ -1,6 +1,6 @@
 # 作业区：聚合、忽略与提交
 
-> 最后更新：2026-09-22 22:57
+> 最后更新：2026-11-24 13:20
 
 作业数据来自网络学堂与外部作业源（雨课堂 / TUOJ / Tyche / DSA OJ），在「全部作业」与
 「今日」两处统一呈现。外部源的接入方式、凭据维护与故障恢复见
@@ -44,12 +44,19 @@
 
 ## 3. 网络学堂：附件与提交
 
-### 3.1 附件上传与拍照
+### 3.1 附件上传、拖入与拍照
 
-提交内容与附件至少需提供一项。Android 端提供「拍照上传」，以 `capture="environment"`
-直接调用后置相机；桌面端使用文件选择。端别判定采用多信号（`isAndroidNavigator`），
-不使用裸 UA 字符串——主窗口 UA 为伪装值，裸 UA 判定恒为 false（见
-[android-release-traps.md §3](./android-release-traps.md)）。
+提交内容与附件至少需提供一项。附件有三条入口，都汇入同一个 `subFile` 状态：点「选择文件」、
+把文件从资源管理器拖进提交卡、Android 端「拍照上传」（`capture="environment"` 直接调用后置
+相机）。端别判定采用多信号（`isAndroidNavigator`），不使用裸 UA 字符串——主窗口 UA 为伪装值，
+裸 UA 判定恒为 false（见 [android-release-traps.md §3](./android-release-traps.md)）。
+
+拖入能落到网页的前提是窗口关掉了 Tauri 的原生拖放：`tauri.conf.json` 的
+`dragDropEnabled: false`。该键缺省为 `true`，此时 wry 在 WebView2 外层接管文件并改发
+`tauri://drag-drop`，网页的 `drop` 事件拿不到 `dataTransfer.files`——这正是 Windows 上
+「只能点选择文件」的原因。接收区（`lib/fileDropZone.ts`）以 capture 阶段注册并
+`stopPropagation` 收口：落在提交卡的文件归提交卡，不再冒泡给暂存箱的整屏接收层或
+富文本编辑器。虚线框与「松开即可添加附件」只在有文件悬停时出现，平时不占版面。
 
 ### 3.2 必交附件预检（R21c）
 
@@ -164,6 +171,7 @@
 | `tools/file-preview-wall-test.mjs` | 预览失败归因：HTML 错误页 ≠ 登录页 ≠ 网关引导页 |
 | `tools/learn-need-file-test.mjs` | 必交附件记忆：记录、清除、上限 |
 | `tools/learn-camera-upload-test.mjs` | 拍照上传入口的端别分流 |
+| `tools/learn-file-drop-test.mjs` | 拖入附件：窗口关原生拖放、落点并入提交流、capture 收口 |
 | `tools/learn-submit-body-test.mjs` | 请求体序列化（FormData → multipart） |
 | `tools/ykt-submit-test.mjs` | 雨课堂主观题提交：签名、multipart 顺序、callback 校验 |
 | `tools/c2-redline-test.mjs` | 学术红线护栏 |
